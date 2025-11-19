@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+    {
+      "appID": "PRN69F6WNX.com.clothingclick.app",
+      "paths": ["*"]
+    }
+    ]
+  }
+}

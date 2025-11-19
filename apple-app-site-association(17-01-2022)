@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+    {
+      "appID": "XASL8C826G.com.rajasthanroyal.app",
+      "paths": ["NOT /e/*", "*", "/", “/archives/201?/* ]
+    }
+    ]
+  }
+}
