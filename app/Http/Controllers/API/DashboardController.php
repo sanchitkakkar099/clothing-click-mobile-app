@@ -16,6 +16,7 @@ use App\user_saved_searches;
 use App\banner;
 use App\user_page_visit_logs;
 use App\brand;
+use App\productVariant;
 use App\category;
 
 class DashboardController extends APIResponseController {
@@ -33,99 +34,114 @@ class DashboardController extends APIResponseController {
 			
             $res = [];
 			$unread_notification =0;
-			$user_sizes=[];
+			
 			$user_brands =[];
 			$all = $request->all();
 			$validator = Validator::make($request->all(), [
 				'latitude' => 'nullable|string',
 				'longitude' => 'nullable|string',
 			]);
-        
-        if ($validator->fails()) {
-            return $this->SendResponse(null, $validator->messages()->first(), 400);
-        }
+		//	$user_sizes=explode(",",$all['sizes']);
+			if ($validator->fails()) {
+				return $this->SendResponse(null, $validator->messages()->first(), 400);
+			}
 		
 			$cordinates = array('latitude'=> $all['latitude'],'longitude'=> $all['longitude']);
 			//print_r($cordinates);exit;
 			
 			if($user){
-				//echo "user exists";exit;
+			
+                 $userSizes = $user->userSizes()->pluck('size_id')->toArray();
+				 //echo "<pre>";print_r($userSizes);exit;
+
 				$recommendedPost = posts::query();
 
-				// Nearest post logic (if this is a scope or custom query)
+				// Nearest
 				$recommendedPost = $recommendedPost->GetNearestPostDashboard($cordinates, true);
 
 				// Private + remove sold
 				$recommendedPost = $recommendedPost->PrivateAccountPost($user)->RemoveSoldPost();
 
-				// Only posts from active users
+				// Only active users
 				$recommendedPost = $recommendedPost->whereHas('user', function($q) {
 					$q->where('is_active', 1);
 				});
 
 				// Gender filter
 				if (isset($all['gender'])) {
-					$recommendedPost = $recommendedPost->where('posts.gender_id', $all['gender'])
-					   ->where('posts.user_id', '!=', $user->id)
-					   ->where('posts.is_active', 1)
-					   ->where('posts.is_delete', 0);
+					$recommendedPost = $recommendedPost
+						->where('posts.gender_id', $all['gender'])
+						->where('posts.user_id', '!=', $user->id)
+						->where('posts.is_active', 1)
+						->where('posts.is_delete', 0)
+						->where('posts.is_sold', 0);
 				}
 
-				// Size + brand filter
-				if (count($user_sizes) > 0 || count($user_brands) > 0) {
-					$recommendedPost = $recommendedPost->where(function($q) use ($user_sizes, $user_brands) {
-						
-						if (count($user_brands) > 0) {
-							$q->whereIn('posts.brand_id', $user_brands);
-						}
+				/* --------------------------------------------
+				   SIZE FILTER: Apply only if userSizes exist
+				   -------------------------------------------- */
+				/* SIZE FILTER */
+					if (!empty($userSizes)) {
 
-						if (count($user_sizes) > 0) {
-							$size_regex = implode('|', $user_sizes);
-							$q->whereRaw('CONCAT(",", posts.sizes, ",") REGEXP ",(' . $size_regex . '),"')
-							  ->orWhere(function($q2) use ($user_brands) {
-								  $q2->where('posts.sizes', 0);
-								  if (count($user_brands) > 0) {
-									  $q2->whereIn('posts.brand_id', $user_brands);
-								  }
-							  });
-						}
+						$recommendedPost = $recommendedPost->where(function($q) use ($userSizes) {
 
-					});
-				}
+							// Match posts whose size is one of the user's sizes
+							$q->whereIn('posts.sizes', $userSizes);
 
-                /* if(count($user_brands) > 0){
-					//echo "In brands";exit;
-                    $user_brands = implode(",", $user_brands);
-                    $recommendedPost = $recommendedPost->orderby('id','desc')->orderByRaw('FIELD(posts.brand_id, ' . $user_brands . ') asc')->orderby('sizes','desc')->take(25)->get();
-                }else{
-					//echo "In not brands";exit;
-                    $recommendedPost = $recommendedPost->orderby('sizes','desc')->orderby('id','desc')->take(25)->get();
-                }  */
-				//$recommendedPost->get();
-				//dd($recommendedPost->toSql());
-
-			
-			}else{
-				$gender_id = '';
-				if (isset($all['gender'])) {
-					$gender_id = $all['gender'];
-				}
-				
-				$recommendedPost = posts::whereHas('user', function($q){
-                    $q->where('is_active',1);
-                })->RemoveSoldPost()->GetNearestPostDashboard($cordinates ,true)
-                ->where([['posts.is_active',1],['posts.is_delete',0]]);
-				// apply gender condition only if 1 or 2
-					if (in_array($gender_id, [1, 2])) {
-						$recommendedPost->where('posts.gender_id', $gender_id);
+							// Optional: include free-size posts
+							//$q->orWhere('posts.sizes', 0);
+						});
 					}
 
+				$recommendedPost = $recommendedPost->orderBy('created_at', 'desc');
+												
+			
+			}else{
+				$userSizes = explode(',',$all['sizes']);
+				$recommendedPost = posts::query();
+
+				// Nearest
+				$recommendedPost = $recommendedPost->GetNearestPostDashboard($cordinates, true);
+
+				// Private + remove sold
+				//$recommendedPost = $recommendedPost->PrivateAccountPost($user)->RemoveSoldPost();
+
+				// Only active users
+			//	$recommendedPost = $recommendedPost->whereHas('user', function($q) {
+				//	$q->where('is_active', 1);
+				//});
+
+				// Gender filter
+				if (isset($all['gender'])) {
+					$recommendedPost = $recommendedPost
+						->where('posts.gender_id', $all['gender'])
+						//->where('posts.user_id', '!=', $user->id)
+						->where('posts.is_active', 1) 
+						->where('posts.is_delete', 0)
+						->where('posts.is_sold', 0);
+				}
+
+				/* --------------------------------------------
+				   SIZE FILTER: Apply only if userSizes exist
+				   -------------------------------------------- */
+				if (!empty($userSizes)) {
+
+						$recommendedPost = $recommendedPost->where(function($q) use ($userSizes) {
+
+							// Match posts whose size is one of the user's sizes
+							$q->whereIn('posts.sizes', $userSizes);
+
+							// Optional: include free-size posts
+							//$q->orWhere('posts.sizes', 0);
+						});
+					}
 
                 
-				$recommendedPost = $recommendedPost->orderby('id','desc');
+				$recommendedPost = $recommendedPost->orderBy('created_at', 'desc');
+
 				//echo "<pre>";print_r($recommendedPost);exit;
 			}
-			
+			$recommendedPost = $recommendedPost->orderBy('created_at', 'desc');
             if(posts::getAPIPostListData($recommendedPost->get())){ 
 				array_push($res,[
 					'type_id' => 2,
@@ -141,7 +157,7 @@ class DashboardController extends APIResponseController {
 				$query = posts::whereHas('user', function($q){
 							$q->where('is_active', 1);
 						})
-						->GetNearestPostDashboard($cordinates, true)
+						//->GetNearestPostDashboard($cordinates, true)
 						->postFollowings($user)
 						->RemoveBlockUserPosts()
 						->RemoveSoldPost()
@@ -152,9 +168,9 @@ class DashboardController extends APIResponseController {
 						]);
 
 					// apply gender filter only if 1 or 2
-					if (in_array($user->user_selected_gender, [1, 2])) {
+				/* 	if (in_array($user->user_selected_gender, [1, 2])) {
 						$query->where('posts.gender_id', $user->user_selected_gender);
-					}
+					} */
 
 					$flwng = posts::getAPIPostListData(
 						$query->distinct('posts.id')
@@ -173,16 +189,16 @@ class DashboardController extends APIResponseController {
 							$q->where('is_active', 1);
 						})
 						->RemoveSoldPost()
-						->GetNearestPostDashboard($cordinates, true)
+						//->GetNearestPostDashboard($cordinates, true)
 						->where([
 							['posts.is_active', 1],
 							['posts.is_delete', 0]
 						]);
 
-					// apply gender filter only if gender_id is 1 or 2
+				/* 	// apply gender filter only if gender_id is 1 or 2
 					if (in_array($gender_id, [1, 2], true)) {
 						$flwng->where('posts.gender_id', $gender_id);
-					}
+					} */
 
 					$flwng = posts::getAPIPostListData(
 						$flwng->distinct('posts.id')
@@ -203,115 +219,93 @@ class DashboardController extends APIResponseController {
 			}
 					//	echo "<pre>";print_r($res);exit;
 
-		$cordinates = [
-    'latitude'  => $all['latitude'],
-    'longitude' => $all['longitude']
-];
+			$cordinates = [
+				'latitude'  => $all['latitude'],
+				'longitude' => $all['longitude']
+			];
 
-$gender_id = isset($all['gender_id']) ? $all['gender_id'] : null;
+			$gender_id = $all['gender'] ?? '';
+			 $user = Auth::user();
+			if(empty($gender_id) && $user){
+				$gender_id = $user->user_selected_gender;
+				
+			}
 
-if ($user) {
+			$brands = Brand::with(['posts' => function($query) use ($user, $cordinates, $gender_id) {
 
-    // STEP 1: Filter brands using whereHas (just like the second code)
-    $brandIds = brand::select('id')
-        ->whereHas('posts', function ($query) use ($user, $gender_id) {
+				// Base post filters
+				$query->where('posts.is_active', 1)
+					  ->where('posts.is_delete', 0)
+					  ->where('posts.is_sold', 0);
 
-            $query->PrivateAccountPost($user)
-                ->where('is_active', 1)
-                ->where('is_delete', 0)
-                ->where('is_sold', 0);
+				// Gender filter (apply only if not empty)
+				if (!empty($gender_id)) {
+					$query->where('posts.gender_id', (int)$gender_id);
+				}
 
-            if (in_array((int) $gender_id, [1,2], true)) {
-                $query->where('gender_id', (int) $gender_id);
-            }
-        })
-        ->orderBy('id','desc')
-        ->pluck('id')
-        ->toArray();
+				// Active post owner
+				$query->whereHas('user', function($q) {
+					$q->where('is_active', 1);
+				});
 
-    // STEP 2: Load posts same as second code
-    $posts = brand::with([
-        'posts' => function ($query) use ($user, $cordinates, $gender_id) {
+				// Only logged-in users get private + nearest filter
+				if ($user) {
+					$query->PrivateAccountPost($user);
+				}
 
-            $query->whereHas('user', function ($q) {
-                $q->where('is_active', 1);
-            })
-            ->PrivateAccountPost($user)
-            ->GetNearestPostDashboard($cordinates, true)
-            ->where('posts.is_active', 1)
-            ->where('posts.is_delete', 0)
-            ->where('posts.is_sold', 0);
+				// Nearest filter (always applied)
+				$query->GetNearestPostDashboard($cordinates, true);
 
-            if (in_array((int) $gender_id, [1,2], true)) {
-                $query->where('posts.gender_id', (int) $gender_id);
-            }
+			}])
 
-            $query->distinct('posts.id');
-        }
-    ])
-    ->whereIn('id', $brandIds);
+			// IMPORTANT: Ensure brand has at least ONE matching post
+			->whereHas('posts', function($query) use ($user, $cordinates, $gender_id) {
 
-} else {
+				// SAME FILTERS AGAIN
+				$query->where('posts.is_active', 1)
+					  ->where('posts.is_delete', 0)
+					  ->where('posts.is_sold', 0);
 
-    // GUEST MODE: Apply same logic as second code
-    $brandIds = brand::select('id')
-        ->whereHas('posts', function ($query) use ($gender_id) {
-            $query->where('is_active', 1)
-                ->where('is_delete', 0)
-                ->where('is_sold', 0);
+				if (!empty($gender_id)) {
+					$query->where('posts.gender_id', (int)$gender_id);
+				}
 
-            if (in_array((int) $gender_id, [1,2], true)) {
-                $query->where('gender_id', (int) $gender_id);
-            }
-        })
-        ->orderBy('id','desc')
-        ->pluck('id')
-        ->toArray();
+				$query->whereHas('user', function($q) {
+					$q->where('is_active', 1);
+				});
 
-    $posts = brand::with([
-        'posts' => function ($query) use ($cordinates, $gender_id) {
+				if ($user) {
+					$query->PrivateAccountPost($user);
+				}
 
-            $query->whereHas('user', function ($q) {
-                $q->where('is_active', 1);
-            })
-            ->GetNearestPostDashboard($cordinates, true)
-            ->where('posts.is_active', 1)
-            ->where('posts.is_delete', 0)
-            ->where('posts.is_sold', 0);
+				$query->GetNearestPostDashboard($cordinates, true);
 
-            if (in_array((int) $gender_id, [1,2], true)) {
-                $query->where('posts.gender_id', (int) $gender_id);
-            }
+			});
 
-            $query->distinct('posts.id');
-        }
-    ])
-    ->whereIn('id', $brandIds);
-}
 
-// Sorting (same behavior)
-if (isset($all['sort_by']) && !empty($all['sort_by'])) {
+		// Sorting (same behavior)
+		if (isset($all['sort_by']) && !empty($all['sort_by'])) {
 
-    switch ($all['sort_by']) {
+			switch ($all['sort_by']) {
 
-        case 'date':
-            $posts->orderBy('id', $all['sort_value']);
-            break;
+				case 'date':
+					$brands->orderBy('id', $all['sort_value']);
+					break;
 
-        case 'distance':
-            $posts->orderBy('posts_count', $all['sort_value']);
-            break;
+				case 'distance':
+					$brands->orderBy('posts_count', $all['sort_value']);
+					break;
 
-        default:
-            // do nothing
-            break;
-    }
+				default:
+					// do nothing
+					break;
+			}
 
-} else {
-    $posts->orderBy('id','desc');
-}
+		} else {
+		//	$brands->orderBy('total_post','desc');
+		}
 
-$posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
+		$posts = $brands->paginate(config('constants.API_PER_PAGE_RECORDS'));
 
 
          //  echo "<pre>";print_r(brand::getAPIStoreListData($brand_posts));exit;
@@ -372,14 +366,17 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 				//
 			//}
 			//echo "<pre>";print_r($res);exit;
-			$local_stores = User::where('role_id','8')->orderby('id','desc')->take(25)->get();
+$local_stores = User::where('role_id', 8)
+    ->where('is_delete', 0)
+    ->orderBy('id', 'desc')
+    ->take(25)
+    ->get();			//echo "<pre>";print_r($local_stores);exit;
 			$store_details = $this->getStoredetails($local_stores);
-			//echo "<pre>";print_r($local_stores);exit;
 			if($store_details){
 				// Stores lists commented
 			 array_push($res,[
                 'type_id' => 6,
-                'name' => 'Shop From Stores',
+                'name' => 'Local Stores & Brands',
                 'type' => 'stores',
                 'list' => $store_details,
                 'unread_notification' => $unread_notification
@@ -479,7 +476,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                 $groupedCategories = [];
                 $gropItem          = [];
                 $auth_user = Auth::user();            
-                if (isset($all['sort_by']) && $all['sort_by'] == 'category'  && $auth_user) {            
+             /*    if (isset($all['sort_by']) && $all['sort_by'] == 'category' ) {            
                     $parentCategory = category::with(['childCategories' => function ($q2) {
                         $q2->where('is_delete', 0)->where('is_active', 1);
                     }])->where('parent_id', 0)->where('is_delete', 0)->where('is_active', 1)->get();                
@@ -599,53 +596,130 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                             }                    
                         }                    
                     }
-					$posts = posts::whereHas('user', function($q){
+					$size = $request->sizes; // or whatever size you are checking
+					if($auth_user){
+						$size = $auth_user->user_selected_gender; 
+					}
+
+					$posts = posts::whereHas('user', function($q) {
+							$q->where('is_active', 1);
+						})
+						->RemoveSoldPost()
+						->GetNearestPostDashboard($cordinates, true)
+						->where([
+							['posts.is_active', 1],
+							['posts.is_delete', 0]
+						])
+						->whereHas('productVariant', function($q) use ($size) {
+							$q->where('size', $size);
+						}) ;
+					
+					
+				/* 	posts::whereHas('user', function($q){
 							$q->where('is_active',1);
 						})->RemoveSoldPost()->GetNearestPostDashboard($cordinates ,true)
-							->where([['posts.is_active',1],['posts.is_delete',0]]);
+							->where([['posts.is_active',1],['posts.is_delete',0]]); */
 					
-				}
+				//}
                 /// category filter end
 
                     
+		$coords = [
+    'latitude'  => $all['latitude'],
+    'longitude' => $all['longitude']
+];
+
+// Base query
+$recommendedPost = posts::query();
+
+// Always apply nearest filter
+$recommendedPost = $recommendedPost->GetNearestPostDashboard($coords, true);
+
+// Always show only active, non-deleted, non-sold posts
+$recommendedPost = $recommendedPost->where([
+    ['posts.is_active', 1],
+    ['posts.is_delete', 0],
+    ['posts.is_sold', 0],
+]);
+
+// Remove user's own posts (only for authenticated users)
+if ($auth_user) {
+    $recommendedPost = $recommendedPost->PrivateAccountPost($user)
+                                       ->RemoveSoldPost()
+                                       ->where('posts.user_id', '!=', $user->id);
+
+    // Fetch user sizes
+    $userSizes = $user->userSizes()->pluck('size_id')->toArray();
+} else {
+    // Guest user – sizes from request
+    $userSizes = !empty($all['sizes']) ? explode(',', $all['sizes']) : [];
+}
+
+// ----------------------------------------------------
+// GENDER FILTER - only apply if gender_id is not empty
+// ----------------------------------------------------
+if (!empty($all['gender_id'])) {
+    $recommendedPost->where('posts.gender_id', $all['gender_id']);
+}
+
+// ----------------------------------------------------
+// SIZE FILTER - only apply when sizes exist
+// ----------------------------------------------------
+if (!empty($userSizes)) {
+    $recommendedPost->whereIn('posts.sizes', $userSizes);
+}
+
+// ----------------------------------------------------
+// Default sort (latest posts)
+// ----------------------------------------------------
+$recommendedPost = $recommendedPost->orderBy('created_at', 'DESC'); 
+
+
 
 					$brands = '';
 					if(isset($all['brand_id'])){
 						$brands = explode(',',$all['brand_id']);
 					}
 					if($all['gender_id']){
-						$posts->whereIn('posts.gender_id',explode(',',$all['gender_id']));
+						$recommendedPost->whereIn('posts.gender_id',explode(',',$all['gender_id']));
 					}
 					if($brands){
-						$posts->whereIn('posts.brand_id',$brands);
+						$recommendedPost->whereIn('posts.brand_id',$brands);
 					}
 					if(isset($all['condition_id'])){
-						$posts->where('posts.condition_id',$all['condition_id']);
+						$recommendedPost->where('posts.condition_id',$all['condition_id']);
 					}
 					if(isset($all['style'])){
-						$posts->whereIn('posts.style_id',explode(',',$all['style']));
+						$recommendedPost->whereIn('posts.style_id',explode(',',$all['style']));
 					}
 					if(isset($all['price_type'])){
-						$posts->where('posts.price_type',$all['price_type']);
+						$recommendedPost->where('posts.price_type',$all['price_type']);
 					}
 					if(isset($all['sizes'])){
-						$posts->whereIn('posts.sizes',explode(',',$all['sizes']));
+						$recommendedPost->whereIn('posts.sizes',explode(',',$all['sizes']));
 					}
-					if(!empty($all['categories'])){
-						$posts->whereIn('posts.categories',explode(',',$all['categories']));
-                    }
+					if (!empty($all['categories'])) {
+							$ids = explode(',', $all['categories']);
+
+							$recommendedPost->where(function ($query) use ($ids) {
+								foreach ($ids as $id) {
+									$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+								}
+							});
+						}					
+					
 					if(!empty($all['colors'])){
-                        $posts->whereIn('posts.colors',explode(',',$all['colors']));
+                        $recommendedPost->whereIn('posts.colors',explode(',',$all['colors']));
                     }
 					
 					if(!empty($all['price_from'])){
-						$posts->where('posts.price','>=',$all['price_from']);
+						$recommendedPost->where('posts.price','>=',$all['price_from']);
 					}
 					if(!empty($all['price_to'])){
-						$posts->where('posts.price','<=',$all['price_to']);
+						$recommendedPost->where('posts.price','<=',$all['price_to']);
 					}
 					if(!empty($all['seller'])){
-						$posts->with('user')->whereHas('user',function($s) use($all) {
+						$recommendedPost->with('user')->whereHas('user',function($s) use($all) {
                                 $s->where('role_id',$all['seller']);
                             });
 					};
@@ -656,38 +730,38 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                     if(isset($all['sort_by']) && !empty($all['sort_by'])){
                         switch($all['sort_by']){
                             case 'date':
-                                $posts->orderby('posts.sizes','desc')->orderby('posts.id',$all['sort_value']);
+                                $recommendedPost->orderby('posts.sizes','desc')->orderby('posts.id',$all['sort_value']);
                                 break;
                             case 'price':
-                                $posts->orderby('posts.price',$all['sort_value']);
+                                $recommendedPost->orderby('posts.price',$all['sort_value']);
                                 break;
                             case 'distance':
-                                $posts->orderby('distance',$all['sort_value']);
+                                $recommendedPost->orderby('distance',$all['sort_value']);
                                 break;
                             case 'category':
                             $gropItem = implode(",", $gropItem);
-                            $posts->orderByRaw('FIELD(posts.id, ' . $gropItem . ') asc');                               
+                            $recommendedPost->orderByRaw('FIELD(posts.id, ' . $gropItem . ') asc');                               
                             break;
                             case 'size':
                             $authUser = \Auth::user();
                             $userSizes = $authUser->userSizes()->pluck('size_id')->toArray();                        
-                            $posts->whereIn('posts.sizes',$userSizes);
+                            $recommendedPost->whereIn('posts.sizes',$userSizes);
                             break;                                                    
                             default:
                                 if(count($user_brands) > 0){
                                     $user_brands = implode(",", $user_brands);
-                                    $posts = $posts->orderby('posts.id','desc')->orderby('posts.sizes','desc')->orderByRaw('FIELD(posts.brand_id, ' . $user_brands . ') asc')->orderby('distance','asc');
+                                    $recommendedPost = $recommendedPost->orderby('posts.id','desc')->orderby('posts.sizes','desc')->orderByRaw('FIELD(posts.brand_id, ' . $user_brands . ') asc')->orderby('distance','asc');
                                 }else{
-                                    $posts = $posts->orderby('posts.id','desc')->orderby('posts.sizes','desc')->orderby('distance','asc');
+                                    $recommendedPost = $recommendedPost->orderby('posts.id','desc')->orderby('posts.sizes','desc')->orderby('distance','asc');
                                 }                                
                                 //$posts->orderby('distance','asc');
                                 break;
                         }
                     }else{
-                       $posts = $posts->orderby('posts.id','desc');                        
+                       $recommendedPost = $recommendedPost->orderby('posts.id','desc');                        
                     }
 
-                    $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
+                    $posts = $recommendedPost->paginate(config('constants.API_PER_PAGE_RECORDS'));
 
                     $res['currentPage'] = $posts->currentPage();
                     $res['hasMorePages'] = $posts->hasMorePages();
@@ -747,7 +821,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                     }
 					$posts = posts::whereHas('user', function($q){
                     $q->where('is_active',1);
-                })->PrivateAccountPost($user)->RemoveBlockUserPosts()->RemoveSoldPost()->postFollowings($user)->where([['posts.gender_id',$user->user_selected_gender],['posts.user_id','!=',$user->id],['posts.is_active',1],['posts.is_delete',0]]);
+                })->PrivateAccountPost($user)->RemoveBlockUserPosts()->RemoveSoldPost()->postFollowings($user)->where([['posts.user_id','!=',$user->id],['posts.is_active',1],['posts.is_delete',0]]);
                 }else{
 					$parentCategory = category::with(['childCategories' => function ($q2) {
                         $q2->where('is_delete', 0)->where('is_active', 1);
@@ -793,7 +867,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                     }
 					$posts = posts::whereHas('user', function($q){
                     $q->where('is_active',1);
-                })->RemoveSoldPost()->GetNearestPostDashboard($cordinates ,true)->where([['posts.is_active',1],['posts.is_delete',0]]);
+                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]]);
 				}
                 
 				
@@ -801,9 +875,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 					if(isset($all['brand_id'])){
 						$brands = explode(',',$all['brand_id']);
 					}
-					if($all['gender_id']){
-						$posts->whereIn('posts.gender_id',explode(',',$all['gender_id']));
-					}
+				
 					if($brands){
 						$posts->whereIn('posts.brand_id',$brands);
 					}
@@ -819,9 +891,24 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 					if(isset($all['sizes'])){
 						$posts->whereIn('posts.sizes',explode(',',$all['sizes']));
 					}
-					if(!empty($all['categories'])){
-						$posts->whereIn('posts.categories',explode(',',$all['categories']));
-                    }
+					if (!empty($all['categories'])) {
+							$ids = explode(',', $all['categories']);
+
+							$posts->where(function ($query) use ($ids) {
+								foreach ($ids as $id) {
+									$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+								}
+							});
+						}
+					if (!empty($all['cat_id'])) {
+							$ids = explode(',', $all['cat_id']);
+
+							$posts->where(function ($query) use ($ids) {
+								foreach ($ids as $id) {
+									$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+								}
+							});
+						}
 					if(!empty($all['colors'])){
                         $posts->whereIn('posts.colors',explode(',',$all['colors']));
                     }
@@ -879,36 +966,52 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 
                 case 4:
 				$cordinates = array('latitude'=> $all['latitude'],'longitude'=> $all['longitude']);
-				$gender_id = $all['gender_id'];
+				$gender_id = $all['gender_id'] ?? '';
 				
 
 				if($user){
 									
 					
-					 $brand_posts =brand::select('id')->whereHas('posts', function($query) use ($user) {
-									$query->PrivateAccountPost($user)->where('is_active', 1)->where('is_delete', 0)->where('is_sold', 0);
+					// STEP 1: Get Brand IDs which have posts
+						$brand_posts = brand::select('id')
+							->whereHas('posts', function($query) use ($user, $gender_id) {
+								$query->PrivateAccountPost($user)
+									  ->where('is_active', 1)
+									  ->where('is_delete', 0)
+									  ->where('is_sold', 0);
+
+								// Apply gender filter only if provided
+								if (!empty($gender_id)) {
+									$query->where('gender_id', $gender_id);
+								}
+							})
+							->orderBy('id', 'desc')
+							->get()
+							->toArray();
+
+						$brandIds = array_column($brand_posts, 'id');
+
+
+						// STEP 2: Fetch brands with posts
+						$posts = brand::with(['posts' => function($query) use ($user, $cordinates, $gender_id) {
+
+								$query->whereHas('user', function($query) {
+									$query->where('is_active', 1);
 								})
-								->orderBy('id', 'desc') // Assuming the brand has a 'name' column
-								->get()->toArray();
-							//echo "<pre>";	print_r($brand_posts);exit;
-					$brandIds = array_column($brand_posts, 'id');
+								->GetNearestPostDashboard($cordinates, true)
+								->where('posts.is_active', 1)
+								->where('posts.is_delete', 0)
+								->where('posts.is_sold', 0);
 
-                   $posts = brand::with(['posts' => function($query) use ($user, $cordinates, 			$gender_id) {
-						$query->whereHas('user', function($query) {
-							$query->where('is_active', 1); // Ensure the user is active
-						})
-						->GetNearestPostDashboard($cordinates, true)
-						->where('posts.is_active', 1)
-						->where('posts.is_delete', 0)
-						->where('posts.is_sold', 0);
+								// Apply gender filter IF provided
+								if (!empty($gender_id)) {
+									$query->where('posts.gender_id', $gender_id);
+								}
 
-						if (!empty($gender_id)) {
-							$query->where('posts.gender_id', $gender_id);
-						}
-
-						$query->distinct('posts.id');
-					}])
-					->whereIn('id', $brandIds);
+								$query->distinct('posts.id');
+							}])
+							->whereIn('id', $brandIds);
+							
 					
 				}else{
 					/* $brand_posts = brand::with(['posts' => function($q2) use($user){
@@ -995,23 +1098,34 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 					};
   */
 
-                    
-                    if(isset($all['sort_by']) && !empty($all['sort_by'])){
-                        switch($all['sort_by']){
-                            case 'date':
-                                $posts->orderby('id',$all['sort_value']);
-                                break;
-                            case 'distance':
-                                $posts->orderby('posts_count',$all['sort_value']);
-                                break;
-                            default:
-                            //    $posts->orderby('posts_count','desc');
-                                break;
-                        }
-                    }else{
-                       $posts = $posts->orderby('id','desc');                        
-                    }
-					//$posts->orderByRaw("FIELD(id, '".$ids_ordered."'");
+                   if (isset($all['sort_by']) && !empty($all['sort_by'])) {
+
+					// default fallback
+					$direction = (!empty($all['sort_value']) && in_array(strtolower($all['sort_value']), ['asc','desc']))
+									? $all['sort_value']
+									: 'desc';
+
+					switch ($all['sort_by']) {
+
+						case 'date':
+							$posts->orderBy('id', $direction);
+							break;
+
+						case 'distance':
+							$posts->orderBy('posts_count', $direction);
+							break;
+
+						default:
+							break;
+					}
+
+				} else {
+
+					// DEFAULT POPULAR BRANDS SORTING
+					$posts = $posts->withCount('posts as post_count')
+								   ->orderBy('post_count', 'desc');
+				}
+					//$posts->orderByRaw("FIELD(id, '".$ids_ordered."'"); 
                         // $posts->get()->sortByDesc(function($posts)
                         // {
                         //     return $posts->posts->count();
@@ -1117,186 +1231,210 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 
                 case 5:
 
-                /// category filter
-                $groupedCategories = [];
-                $gropItem          = [];
-                $auth_user = Auth::user();            
-                if (isset($all['sort_by']) && $all['sort_by'] == 'category' && $auth_user) {            
-                    $parentCategory = category::with(['childCategories' => function ($q2) {
-                        $q2->where('is_delete', 0)->where('is_active', 1);
-                    }])->where('parent_id', 0)->where('id',$all['cat_id'])->where('is_delete', 0)->where('is_active', 1)->get();                
-                    foreach ($parentCategory as $category) {
-                        $catSubCatPost = posts::whereHas('user', function($q){
-                    $q->where('is_active',1);
-                })->PrivateAccountPost($user)->RemoveBlockUserPosts()->RemoveSoldPost()->where([['posts.gender_id',$user->user_selected_gender],['posts.user_id','!=',$user->id],['posts.is_active',1],['posts.is_delete',0]]);
+								   // -----------------------------
+					// BASE QUERY (COMMON)
+					// -----------------------------
+					$posts = posts::query()
+						->whereHas('user', function ($q) {
+							$q->where('is_active', 1);
+						})
+						->where([
+							['posts.is_active', 1],
+							['posts.is_delete', 0],
+						])
+						->RemoveSoldPost()
+						->distinct('posts.id');
 
-                        if ($category->childCategories && count($category->childCategories) > 0) {
-                            $subCategories = $category->childCategories()->pluck('id');
-                            $catSubCatPost = $catSubCatPost->whereHas('categories', function ($q3) use ($subCategories) {
-                                    $q3->whereIn('category_id', $subCategories->toArray());
-                                })->get();
-
-                            if (count($catSubCatPost) > 0) {
-                                //grouping all subcategories 
-                                $grouped = $catSubCatPost->groupBy(function($item, $key){
-                                            $item_val = explode(",",$item->categories);
-                                            return $item_val[1];
-                                })->sortByDesc('categories');   
-
-                                $grouped = $grouped->toArray();
-                                ksort($grouped);
-
-                                foreach ($grouped as $key => $items) {
-                                    foreach ($items as $get_item => $item) {
-                                        array_push($gropItem, $item['id']);
-                                    }
-                                }
-                            }                        
-
-                        } else {
-                            $catSubCatPost = $catSubCatPost->whereHas('categories', function ($q3) use ($category) {
-                                    $q3->where('category_id', $category->id);
-                                })->get();
-                            if (count($catSubCatPost) > 0) {
-                                foreach ($catSubCatPost as $key => $item) {
-                                        array_push($gropItem, $item->id);
-                                }
-                            }                    
-                        }                    
-                    }
-					$posts = posts::whereHas('user', function($q){
-                    $q->where('is_active',1);
-                })->PrivateAccountPost($user)->GetNearestPostDashboard($cordinates ,true)->RemoveBlockUserPosts()->RemoveSoldPost()->where([['posts.gender_id',$user->user_selected_gender],['posts.user_id','!=',$user->id],['posts.is_active',1],['posts.is_delete',0],])->whereRaw('FIND_IN_SET(?, posts.categories)', [$all['cat_id']])->distinct('posts.id');
-                }else{
-					 $parentCategory = category::with(['childCategories' => function ($q2) {
-                        $q2->where('is_delete', 0)->where('is_active', 1);
-                    }])->where('parent_id', 0)->where('id',$all['cat_id'])->where('is_delete', 0)->where('is_active', 1)->get();                
-                    foreach ($parentCategory as $category) {
-                        $catSubCatPost = posts::whereHas('user', function($q){
-                    $q->where('is_active',1);
-                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]]);
-
-                        if ($category->childCategories && count($category->childCategories) > 0) {
-                            $subCategories = $category->childCategories()->pluck('id');
-                            $catSubCatPost = $catSubCatPost->whereHas('categories', function ($q3) use ($subCategories) {
-                                    $q3->whereIn('category_id', $subCategories->toArray());
-                                })->get();
-
-                            if (count($catSubCatPost) > 0) {
-                                //grouping all subcategories 
-                                $grouped = $catSubCatPost->groupBy(function($item, $key){
-                                            $item_val = explode(",",$item->categories);
-                                            return $item_val[1];
-                                })->sortByDesc('categories');   
-
-                                $grouped = $grouped->toArray();
-                                ksort($grouped);
-
-                                foreach ($grouped as $key => $items) {
-                                    foreach ($items as $get_item => $item) {
-                                        array_push($gropItem, $item['id']);
-                                    }
-                                }
-                            }                        
-
-                        } else {
-                            $catSubCatPost = $catSubCatPost->whereHas('categories', function ($q3) use ($category) {
-                                    $q3->where('category_id', $category->id);
-                                })->get();
-                            if (count($catSubCatPost) > 0) {
-                                foreach ($catSubCatPost as $key => $item) {
-                                        array_push($gropItem, $item->id);
-                                }
-                            }                    
-                        }                    
-                    }
-					$posts = Posts:: where([['posts.is_active',1],['posts.is_delete',0]])
-    ->whereRaw('FIND_IN_SET(?, REPLACE(posts.categories, " ", ""))', [$all['cat_id']])
-	->GetNearestPostDashboard($cordinates, true)
-    ->RemoveSoldPost()
-    ->distinct('posts.id');
-				}
-                /// category filter end
-
-                    
-				
-				$brands = '';
-					if(isset($all['brand_id'])){
-						$brands = explode(',',$all['brand_id']);
+					// Apply common scopes
+					if (!empty($cordinates['latitude'])) {
+						$posts->GetNearestPostDashboard($cordinates, true);
 					}
-					if($all['gender_id']){
-						$posts->where('posts.gender_id',$all['gender_id']);
-					}
-					if($brands){
-						$posts->whereIn('posts.brand_id',$brands);
-					}
-					if(isset($all['condition_id'])){
-						$posts->where('posts.condition_id',$all['condition_id']);
-					}
-					if(isset($all['style'])){
-						$posts->whereIn('posts.style_id',explode(',',$all['style']));
-					}
-					if(isset($all['price_type'])){
-						$posts->where('posts.price_type',$all['price_type']);
-					}
-					if(isset($all['sizes'])){
-						$posts->whereIn('posts.sizes',explode(',',$all['sizes']));
-					}
-					if(!empty($all['categories'])){
-						$posts->whereIn('posts.categories',explode(',',$all['categories']));
-                    }
-					if(!empty($all['colors'])){
-                        $posts->whereIn('posts.colors',explode(',',$all['colors']));
-                    }
-					
-					if(!empty($all['price_from'])){
-						$posts->where('posts.price','>=',$all['price_from']);
-					}
-					if(!empty($all['price_to'])){
-						$posts->where('posts.price','<=',$all['price_to']);
-					}
-					if(!empty($all['seller'])){
-						$posts->with('user')->whereHas('user',function($s) use($all) {
-                                $s->where('role_id',$all['seller']);
-                            });
-					};
 
+					if (!empty($user)) {
+						$posts->PrivateAccountPost($user)
+							  ->RemoveBlockUserPosts();
+					}
 
+					// -----------------------------
+					// CATEGORY SORT LOGIC
+					// -----------------------------
+					$gropItem = [];
 
-                    if(isset($all['sort_by']) && !empty($all['sort_by'])){
-                        switch($all['sort_by']){
-                            case 'date':
-                                $posts->orderby('posts.id',$all['sort_value']);
-                                break;
-                            case 'price':
-                                $posts->orderby('posts.price',$all['sort_value']);
-                                break;
-                            case 'distance':
-                                $posts->orderby('distance',$all['sort_value']);
-                                break;
-                            case 'category':
-                                $gropItem = implode(",", $gropItem);
-                                $posts->orderByRaw('FIELD(posts.id, ' . $gropItem . ') asc');                               
-                            break;
-                            case 'size':
-                                $authUser = \Auth::user();
-                                $userSizes = $authUser->userSizes()->pluck('size_id')->toArray();                        
-                                $posts->whereIn('posts.sizes',$userSizes);
-                            break;                                                                                          
-                            default:
-                                $posts->orderby('posts.id','desc');
-                                break;
-                        }
-                    }else{
-                       $posts = $posts->orderby('posts.id','desc');                        
-                    }
+					if (isset($all['sort_by']) && $all['sort_by'] == 'category') {
 
-                    $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
+						$parentCategory = category::with(['childCategories' => function ($q2) {
+							$q2->where('is_delete', 0)->where('is_active', 1);
+						}])
+						->where('parent_id', 0)
+						->where('id', $all['cat_id'])
+						->where('is_delete', 0)
+						->where('is_active', 1)
+						->get();
 
-                    $res['currentPage'] = $posts->currentPage();
-                    $res['hasMorePages'] = $posts->hasMorePages();
-                    $res['posts'] = posts::getAPIPostListData($posts->items());
-                    $pagetype = 'CATEGORYPOST';
+						foreach ($parentCategory as $category) {
+
+							$catQuery = clone $posts;
+
+							if ($category->childCategories && count($category->childCategories) > 0) {
+
+								$subCategories = $category->childCategories()->pluck('id');
+
+								$catPosts = $catQuery->whereHas('categories', function ($q3) use ($subCategories) {
+									$q3->whereIn('category_id', $subCategories->toArray());
+								})->get();
+
+							} else {
+
+								$catPosts = $catQuery->whereHas('categories', function ($q3) use ($category) {
+									$q3->where('category_id', $category->id);
+								})->get();
+							}
+
+							if (count($catPosts) > 0) {
+
+								$grouped = $catPosts->groupBy(function ($item) {
+									$item_val = explode(",", $item->categories);
+									return $item_val[1] ?? null;
+								})->sortByDesc('categories')->toArray();
+
+								ksort($grouped);
+
+								foreach ($grouped as $items) {
+									foreach ($items as $item) {
+										$gropItem[] = $item['id'];
+									}
+								}
+							}
+						}
+
+						// Apply base category filter
+						$posts->whereRaw("CONCAT(',', posts.categories, ',') REGEXP ',(" . $all['cat_id'] . "),'");
+					}
+
+					// -----------------------------
+					// APPLY FILTERS (COMBINED)
+					// -----------------------------
+					$posts->where(function ($q) use ($all) {
+
+						if (!empty($all['brand_id'])) {
+							$q->whereIn('posts.brand_id', explode(',', $all['brand_id']));
+						}
+
+						if (!empty($all['gender_id'])) {
+							$q->whereIn('posts.gender_id', explode(',', $all['gender_id']));
+						}
+
+						if (!empty($all['condition_id'])) {
+							$q->where('posts.condition_id', $all['condition_id']);
+						}
+
+						if (!empty($all['style'])) {
+							$q->whereIn('posts.style_id', explode(',', $all['style']));
+						}
+
+						if (!empty($all['price_type'])) {
+							$q->where('posts.price_type', $all['price_type']);
+						}
+
+						if (!empty($all['colors'])) {
+							$colors = implode('|', explode(',', $all['colors']));
+							$q->whereRaw("CONCAT(',', posts.colors, ',') REGEXP ',($colors),'");
+						}
+
+						if (!empty($all['sizes'])) {
+							$sizeIds = array_values(array_filter(array_map('intval', explode(',', $all['sizes']))));
+							$sizes = implode('|', $sizeIds);
+							// Shopify-imported posts keep their size on the variants (product_variants.size = size id), not in posts.sizes
+							$q->where(function ($sq) use ($sizes, $sizeIds) {
+								$sq->whereRaw("CONCAT(',', posts.sizes, ',') REGEXP ',($sizes),'");
+								if (!empty($sizeIds)) {
+									$sq->orWhereHas('productVariant', function ($v) use ($sizeIds) {
+										$v->whereIn('size', $sizeIds);
+									});
+								}
+							});
+						}
+
+						if (!empty($all['cat_id'])) {
+							$ids = explode(',', $all['cat_id']);
+
+							$q->where(function ($query) use ($ids) {
+								foreach ($ids as $id) {
+									$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+								}
+							});
+						}
+						if (!empty($all['price_from'])) {
+							$q->where('posts.price', '>=', (int)$all['price_from']);
+						}
+
+						if (!empty($all['price_to'])) {
+							$q->where('posts.price', '<=', (int)$all['price_to']);
+						}
+
+						if (!empty($all['seller'])) {
+							$q->whereHas('user', function ($s) use ($all) {
+								$s->where('role_id', (int)$all['seller']);
+							});
+						}
+					});
+
+					// -----------------------------
+					// SORTING SWITCH (CLEAN ✅)
+					// -----------------------------
+					$sortBy    = $all['sort_by'] ?? null;
+					$sortValue = $all['sort_value'] ?? 'desc';
+
+					switch ($sortBy) {
+
+						case 'date':
+							$posts->orderBy('posts.created_at', $sortValue);
+							break;
+
+						case 'price':
+							$posts->orderBy('posts.price', $sortValue);
+							break;
+
+						case 'distance':
+							if (!empty($cordinates['latitude'])) {
+								$posts->orderBy('distance', $sortValue);
+							}
+							break;
+
+						case 'category':
+							if (!empty($gropItem)) {
+								$ids = implode(',', $gropItem);
+								$posts->orderByRaw("FIELD(posts.id, $ids)");
+							} else {
+								$posts->orderBy('posts.id', 'desc');
+							}
+							break;
+
+						case 'size':
+							$authUser = Auth::user();
+							if ($authUser) {
+								$userSizes = $authUser->userSizes()->pluck('size_id')->toArray();
+								$posts->whereRaw("CONCAT(',', posts.sizes, ',') REGEXP ',(" . implode('|', $userSizes) . "),'");
+							}
+							break;
+
+						case 'trending':
+							$posts->orderBy('posts.post_views', 'desc');
+							break;
+
+						default:
+							$posts->orderBy('posts.id', 'desc');
+							break;
+					}
+
+					// -----------------------------
+					// PAGINATION
+					// -----------------------------
+					$posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
+
+					$res['currentPage']  = $posts->currentPage();
+					$res['hasMorePages'] = $posts->hasMorePages();
+					$res['posts'] = posts::getAPIPostListData($posts->items());
                     break;
 
                 case 6:
@@ -1438,9 +1576,18 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 					if(isset($all['sizes'])){
 						$posts->whereIn('posts.sizes',explode(',',$all['sizes']));
 					}
-					if(!empty($all['categories'])){
+					if (!empty($all['categories'])) {
+							$ids = explode(',', $all['categories']);
+
+							$posts->where(function ($query) use ($ids) {
+								foreach ($ids as $id) {
+									$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+								}
+							});
+						}
+					/* if(!empty($all['categories'])){
 						$posts->whereIn('posts.categories',explode(',',$all['categories']));
-                    }
+                    } */
 					if(!empty($all['colors'])){
                         $posts->whereIn('posts.colors',explode(',',$all['colors']));
                     }
@@ -1499,7 +1646,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                     break;
 
                 case 8:
-
+				$cordinates = array('latitude'=> $all['latitude'],'longitude'=> $all['longitude']);
                 /// category filter
                 $groupedCategories = [];
                 $gropItem          = [];
@@ -1552,7 +1699,7 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                 /// category filter end
                   $posts = posts::whereHas('user', function($q){
                     $q->where('is_active',1);
-                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]])->whereRaw("FIND_IN_SET(?, posts.categories)", [$all['cat_id']]);
+                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]])->whereRaw("FIND_IN_SET(?, posts.categories)", [$all['cat_id']])->GetNearestPostDashboard($cordinates,true);
 				}else{
 					if (isset($all['sort_by']) && $all['sort_by'] == 'category') {            
                     $parentCategory = category::with(['childCategories' => function ($q2) {
@@ -1601,15 +1748,15 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
                 /// category filter end
                     $posts = posts::whereHas('user', function($q){
                     $q->where('is_active',1);
-                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]])->whereRaw("FIND_IN_SET(?, posts.categories)", [$all['cat_id']]);
+                })->RemoveSoldPost()->where([['posts.is_active',1],['posts.is_delete',0]])->whereRaw("FIND_IN_SET(?, posts.categories)", [$all['cat_id']])->GetNearestPostDashboard($cordinates,true);  
 				}
 				
-				$brands = '';
+				$brands = ''; 
 					if(isset($all['brand_id'])){
 						$brands = explode(',',$all['brand_id']);
 					}
 					if($all['gender_id']){
-						$posts->whereIn('posts.gender_id',explode(',',$all['gender_id']));
+						$posts->whereIn('posts.gender_id',explode(',',$all['gender_id'])); 
 					}
 					if($brands){
 						$posts->whereIn('posts.brand_id',$brands);
@@ -1626,9 +1773,15 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 					if(isset($all['sizes'])){
 						$posts->whereIn('posts.sizes',explode(',',$all['sizes']));
 					}
-					if(!empty($all['categories'])){
-						$posts->whereIn('posts.categories',explode(',',$all['categories']));
-                    }
+					if (!empty($all['categories'])) {
+						$ids = explode(',', $all['categories']);
+
+						$posts->where(function ($query) use ($ids) {
+							foreach ($ids as $id) {
+								$query->orWhereRaw("FIND_IN_SET(?, posts.categories)", [$id]);
+							}
+						});
+					}
 					if(!empty($all['colors'])){
                         $posts->whereIn('posts.colors',explode(',',$all['colors']));
                     }
@@ -1839,8 +1992,9 @@ $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
 			$store_data['name']= $st->name;
 			
 			$store_details  = store_details::where('user_id',$st->id)->first();
-			$store_data['total_products']= $store_details->total_products;
-			$store_data['profile_image']= $store_details->profile_image;
+			$store_data['total_products'] = $store_details->total_products ?? 0;
+$store_data['profile_image']  = $store_details->profile_image ?? ''; 
+
 			$data[] = $store_data;
 		}
 		return $data;
