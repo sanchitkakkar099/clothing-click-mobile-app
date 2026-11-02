@@ -35,4 +35,15 @@ return [
         'redirect' => env('FACEBOOK_CALLBACK_URL'),
     ],
 
+	'mailjet' => [
+		'key' => env('MAILJET_APIKEY'),
+		'secret' => env('MAILJET_SECRET'),
+	],
+
+
+	'shopify' => [
+		'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
+		'webhook_secret' => env('SHOPIFY_WEBHOOK_SECRET'),
+	],
+
 ];

@@ -20,7 +20,7 @@ use App\post_colors;
 use App\post_sizes;
 use App\ProductVariant;
 use App\category;
-use App\size;
+use App\size; 
 use App\color;
 use App\brand;
 use App\style;
@@ -97,111 +97,115 @@ class HomeController extends Controller
 		//echo "<pre>";print_r($user);exit;
         return view('profile',compact('user','selling_posts','sold_posts'));
     }
-	public function fetchStores( Request $request)
-    {
+	public function fetchStores(Request $request)
+{
+    $url = "https://vendor.clothingclick.ca/api/storeappInfo/store-profile/list";
 
-		//$url = "https://clownfish-app-u8h6e.ondigitalocean.app/storedata";
-		$url = "https://vendor.clothingclick.ca/api/storeappInfo/store-profile/list";
-         
-        $crl = curl_init();
-        curl_setopt($crl, CURLOPT_URL, $url);
-        curl_setopt($crl, CURLOPT_FRESH_CONNECT, true);
-        curl_setopt($crl, CURLOPT_RETURNTRANSFER, true);
-         
-        $response = curl_exec($crl);
-        if(!$response){
-           die('Error: "' . curl_error($ch) . '" - Code: ' . curl_errno($ch));
-        }
-         
-        curl_close($crl);
-		$data = json_decode($response);
-		$user_data = [];
-		foreach($data->data as $d){
-			//echo "<pre>";print_r($d);exit;
-			$user_data['role_id'] =8;
-			$user_data['email'] =$d->store_email;
-			$user_data['username'] =$d->shop_name;
-			$user_data['password'] ='';
-			$user_data['name'] =str_replace("-", " ",$d->shop_name);
-			$user_data['locations'] =$d->city;
-			$user_data['website'] =$d->store_domain;
-			$user_data['bio'] =$d->store_description;
-			$user_data['facebook_id'] =$d->store_facbookId;
-			$user_data['instagram_id'] =$d->store_InstaId;
-			$store_data = [];
-			
-			$store_data['shopify_id'] = $d->_id;
-			$store_data['store_description'] = $d->store_description;
-			$store_data['timings'] = serialize($d->timings);
-			$store_data['address1'] = $d->address;
-			$store_data['address2'] = '';
-			$store_data['city'] = $d->city;
-			$store_data['country'] = $d->country;
-			$store_data['profile_image'] = $d->brand_logo;
-			$store_data['cover_image'] = $d->brand_image_url;
-			$store_data['total_products'] = $d->total_products;	
-			$store_data['postal_Code'] = $d->postal_code;
-			
-			$store_data['latitude'] = $d->latitude;	
-			$store_data['longitude'] = $d->longitude;	
-			$user = User::where('email', '=', $d->store_email)->first();
-			if ($user === null) {
-				
-				$user = User::create($user_data);                
-				$store_data['user_id'] = $user->id;
-				User::find($user->id)->update($user_data);
-				$store = store_details::where('shopify_id', '=', $d->_id)->first();
-				if($store){
-					store_details::find($store->id)->update($store_data);
-				}else{
-					store_details::create($store_data);
-				}
-				$location =[];
-				$location['appuser_id'] = $user->id;
-				$location['address'] = $d->address;
-				$location['city'] = $d->city;
-				$location['area'] = $d->country;
-				$location['postal_code'] = $d->postal_code;
-				$location['longitude'] = $d->longitude;
-				$location['latitude'] = $d->latitude;
-				$location['price'] = 0;
-				$location['is_default'] = 0;
-				
-				location::firstOrCreate(
-				$location
-				);
-				//store_details::create($store_data);
+    $crl = curl_init();
+    curl_setopt_array($crl, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FRESH_CONNECT => true,
+    ]);
 
+    $response = curl_exec($crl);
 
-			}
-			else{
-				$store_data['user_id'] = $user->id;
-				User::find($user->id)->update($user_data);
-				$store = store_details::where('shopify_id', '=', $d->_id)->first();
-				if($store){
-					store_details::find($store->id)->update($store_data);
-				}else{
-					store_details::create($store_data);
-				}
-				$location =[];
-				$location['appuser_id'] = $user->id;
-				$location['address'] = $d->address;
-				$location['city'] = $d->city;
-				$location['area'] = $d->country;
-				$location['postal_code'] = $d->postal_code;
-				$location['longitude'] = $d->longitude;
-				$location['latitude'] = $d->latitude;
-				$location['price'] = 0;
-				$location['is_default'] = 0;
-				
-				location::firstOrCreate(
-				$location
-				);
-			}
-		}
-		
-		
+    if (!$response) {
+        die('Error: "' . curl_error($crl) . '" - Code: ' . curl_errno($crl));
     }
+
+    curl_close($crl);
+
+    $data = json_decode($response);
+	//echo "<pre>"; print_r($data);exit;
+
+    foreach ($data->data as $d) {
+
+        /** ---------------- USER DATA ---------------- */
+        $user_data = [
+            'role_id' => 8,
+            'email' => $d->store_email,
+            'username' => $d->username,
+            'name' => str_replace("-", " ", $d->shop_name),
+            'website' => $d->store_domain,
+            'bio' => $d->store_description,
+            'facebook_id' => $d->store_facbookId,
+            'instagram_id' => $d->store_InstaId,
+            'show_email_on_app' =>  filter_var(
+										$d->show_email_on_app,
+										FILTER_VALIDATE_BOOLEAN
+									) ? 1 : 0,   
+			'address_visible' =>  filter_var(
+										$d->address_visible,
+										FILTER_VALIDATE_BOOLEAN
+									) ? 1 : 0,
+           
+        ];
+
+        $user = User::updateOrCreate(
+            ['website' => $d->store_domain ],
+            $user_data
+        );
+		$raw = trim((string) $d->show_email_on_app);
+
+		$user_data['show_email_on_app'] = $raw === '1' ? 1 : 0;
+				$raw1 = trim((string) $d->address_visible);
+
+		$user_data['address_visible'] = $raw1 === '1' ? 1 : 0;
+
+
+		$user->update($user_data);
+
+        /** ---------------- STORE DATA ---------------- */
+        $store_data = [
+            'user_id' => $user->id,
+            'shopify_id' => $d->_id,
+            'store_description' => $d->store_description,
+			'timings' => !empty($d->timings) ? serialize($d->timings) : null,            
+			'address1' => $d->address,
+            'city' => $d->city,
+            'country' => $d->country,
+            'postal_Code' => $d->postal_code,
+            'latitude' => $d->latitude,
+            'longitude' => $d->longitude,
+            'profile_image' => $d->brand_logo,
+            'cover_image' => $d->brand_image_url,
+            'total_products' => $d->total_products,
+        ];
+
+        store_details::updateOrCreate(
+            ['shopify_id' => $d->_id],
+            $store_data
+        );
+
+        /** ---------------- LOCATION DATA ---------------- */
+        $location = [
+            'appuser_id' => $user->id,
+            'address' => $d->address,
+            'city' => $d->city,
+            'area' => $d->country,
+            'postal_code' => $d->postal_code,
+            'latitude' => $d->latitude,
+            'longitude' => $d->longitude,
+            'price' => 0,
+            'is_default' => 1,
+        ];
+
+        location::updateOrCreate(
+            [
+                'appuser_id' => $user->id,
+                'postal_code' => $d->postal_code
+            ],
+            $location
+        );
+    }
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Stores synced successfully'
+    ]);
+}
+
 	 public function getImages($images,$isSingle = false)
     {
         if(empty($images)){
@@ -380,7 +384,8 @@ class HomeController extends Controller
     {
 		
 		$post = posts::find($id);
-		$location = location::where('id',$post->locations)->select('city')->first();
+		$location = location::where('id',$post->locations)->first();
+		//echo "<pre>";print_r($location); exit;
         $res = [];
 		$res['title'] = $post->title;
 		$res['description'] = $post->description;
@@ -389,6 +394,11 @@ class HomeController extends Controller
 		$res['size'] = $post->search_size;
 		$res['gender'] = $post->search_gender;
 		$res['location'] = $location->city;
+		$res['lat'] = $location->latitude;
+		$res['long'] = $location->longitude;
+		$res['city'] = $location->city;
+		$res['state'] = $location->state;
+		$res['country'] = $location->country;
 		$res['post_views'] = $post->post_views;
 		$res['images'] = $this->getImages($post->images,false);
 		$OldDate = strtotime($post->created_at);
@@ -405,723 +415,386 @@ class HomeController extends Controller
         return view('product', compact('res'));
     }
 	
-	public function getShopifyPost(Request $request){
-		//echo "Yes I am here ";exit;
-        try {
-			$ch = curl_init('https://parenttesting.myshopify.com/admin/api/2022-01/products.json?status=active&limit=250'); // Initialise cURL
-			//$post = json_encode($post); // Encode the data array into a JSON string
-			$authorization = "X-Shopify-Access-Token: ".env('SHOPIFY_ACCESS_TOKEN'); // Prepare the authorisation token
-			curl_setopt($ch, CURLOPT_HTTPHEADER, array($authorization )); // Inject the token into the header
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "GET");
-			$result = curl_exec($ch); // Execute the cURL statement
-			//return json_decode($result); 
-			curl_close($ch); // Close the cURL connection
-		//	return json_decode($result); // Return the received data
-			$shopify_products = json_decode($result);
-			$sposts  = $shopify_products->products;
-			$i = 1;
-			/////
-		//	echo "<pre>";print_r($sposts);exit;
-						// Assuming $products is the array shown in the screenshot
-			/* 	$active_products = [];
+	public function getShopifyPost(Request $request)
+{
+    try {
 
-				foreach ($sposts as $product) {
-					if (isset($product->status) && $product->status === 'active') {
-						$active_products[] = $product;
-					}
-				} */
+        /** --------------------------------
+         * FETCH PRODUCTS FROM SHOPIFY
+         * -------------------------------- */
 
-			// Output the active products
-			  
-			  
-			  
-		//	echo "<pre>";print_r($sposts);exit;
-			foreach($sposts as $p){
-			
-				$vendor = $p->vendor;
-				$vendor = $this->RemoveSpecialChar($vendor);
-				$vendor  = strtolower(str_replace(' ', '_',$vendor));
+		$ch = curl_init();
 
-				$normalizedVendor = strtolower(str_replace('-', '_', $vendor));
+		curl_setopt_array($ch, [
+			CURLOPT_URL => 'https://parenttesting.myshopify.com/admin/api/2022-01/products.json?limit=250',
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_CUSTOMREQUEST => 'GET',
+			CURLOPT_HTTPHEADER => [
+				'X-Shopify-Access-Token: ' . config('services.shopify.access_token'),
+			],
+		]);
 
-				$user = User::where(function($query) use ($normalizedVendor) {
-							$query->where('username', $normalizedVendor)
-								  ->orWhereRaw("REPLACE(website, '-', '_') LIKE ?", ["%$normalizedVendor%"])
-								  ->orWhereRaw("REPLACE(website, '-', '.') LIKE ?", ["%$normalizedVendor%"]);
-						})
-						->where('role_id', 8)
-						->first();
-						//echo "<pre>"; print_r($vendor);echo "</pre>";
-						//echo "<pre>";print_r($normalizedVendor); echo "</pre>";
-						//echo "<pre>";print_r($user);echo "</pre>";
-				if($user){
-					$location_id = 	location::where('appuser_id', $user->id)->first();
-					$ch = curl_init('https://parenttesting.myshopify.com/admin/api/2023-07/products/'.$p->id.'/metafields.json'); // Initialise cURL
-					$authorization = "X-Shopify-Access-Token: ".env('SHOPIFY_ACCESS_TOKEN'); // Prepare the authorisation token
-					curl_setopt($ch, CURLOPT_HTTPHEADER, array($authorization )); // Inject the token into the header
-					curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-					curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "GET");
-					$result = curl_exec($ch); // Execute the cURL statement
-					//return json_decode($result); 
-					curl_close($ch); // Close the cURL connection
-					$shopify_products = json_decode($result);
-					//echo "Product id : ".$p->id."<pre>";print_r($shopify_products->metafields);echo "</pre>";
-					$post_exists = posts::where('shopify_product_id', $p->id)->first();
-					if($post_exists){
-						//echo "exists product id "; print_r($p);echo "<br/>"; 
-						
-						$gender_id = '';
-						$size = '';
-						$category = '';
-						$tags = $p->tags;
+		$response = curl_exec($ch);
 
-						$tagsArray = collect(explode(',', $tags))->map(fn($tag) => trim($tag));
+		if (curl_errno($ch)) {
+			echo 'Curl Error: ' . curl_error($ch);
+		}
 
-						// Step 2: Detect gender
-							$gender_id = 1;
-						if ($tagsArray->contains('Menswear')) {
-							$gender_id = 1;
-							$tagsArray = $tagsArray->reject(fn($tag) => $tag === 'Menswear');
-						} elseif ($tagsArray->contains('Womenswear')) {
-							$gender_id = 2;
-							$tagsArray = $tagsArray->reject(fn($tag) => $tag === 'Womenswear');
-						}
+		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-						// Step 3: If gender_id is set, fetch matching categories
-						$categoryMatches = [];
-
-						if ($gender_id) {
-							$categoryMatches = category::whereIn('name', $tagsArray)
-								->where('gender_id', $gender_id)
-								->pluck('id')
-								->toArray(); // or use ->pluck('id') if you need category IDs
-						}
-						
-						// Output
-						//echo "Gender ID: $gender_id\n";
-						//echo "<pre>";print_r($p->tags);echo "</pre>";
-					//	echo "<pre>";print_r($categoryMatches);echo "</pre>"; 
-
-						
-						//$gender_id = '';
-						$size = '';
-						$category = implode(',',$categoryMatches);
-						//echo "<pre>";print_r($category);echo "</pre>"; 
-
-						
-						if($p->options){
-							 foreach($p->options as $o){
-								 if($gender_id == ''){
-									 if($o->name == 'Gender'){
-										 $gender = $o->values[0];
-										 
-									 } 
-								 }
-								 if($category == ''){
-									 if($o->name == 'Type'){
-										 $type = $o->values[0];
-										 
-									 }
-								 }
-								 if($o->name == 'Size'){
-									 $size = $o->values[0];
-									 
-								 }
-							 }
-						}
-
-						if($shopify_products->metafields){
-							 foreach($shopify_products->metafields as $prod){
-								  
-								 if($prod->key == 'Style' || $prod->key == 'style'){
-									 $style = $prod->value;
-									 $style_backup = $prod->value;
-									 
-								 } 
-								 if($prod->key == 'Brand' || $prod->key == 'brand'){
-									 $brand = $prod->value;
-									 
-								 } 
-								 if($prod->key == 'Color' || $prod->key == 'color'){
-									 $color = $prod->value;
-									 
-								 } 
-								 
-							 }
-						}
-						
-						if($gender_id == ''){
-							if($gender){
-								if($gender == 'M' || $gender == 'Male'){
-									 $gender_id = 1;
-								 }else{
-									 $gender_id = 2;
-								 }
-							}else{
-								$gender_id = 1;
-							}
-						}
-						
-						if($category == ''){ 
-						 if(!empty($type)){
-							$categories = category::where([['gender_id',$gender_id],['name','like',$type.'%']])->first();
-							if($categories ){
-								$category = $categories->id;
-							}else{
-								$category = 1;
-								/* $data = array('gender_id'=>$gender_id, 'name'=>$type, 'parent_id'=>0,'is_active'=>1);
-								$category = category::create($data );
-								$category = $category->id; */
-							}
-						 }
-						}
-							
-							
-							 if(!empty($size)){
-
-							$sizes = size::where([['gender_id',$gender_id],['category_id',$category],['name',$size]])->first();
-							if($sizes ){
-								$size_id = $sizes->id;
-							}else{
-								$size_id = 1;
-								/* $data = array('gender_id'=>$gender_id, 'name'=>$size, 'category_id'=>$category,'is_active'=>1);
-								$size = size::create($data );
-								$size_id = $size->id; */
-							}
-							 }
-							if(!empty($color)){
-								$colors = color::whereRaw('LOWER(name) = ?', [strtolower($color)])->first();
-								if($colors ){
-									$color_id = $colors->id;
-								}else{
-									$color_id  = 1;
-									/* $data = array('name'=>$color,'is_active'=>1);
-									$color = color::create($data );
-									$color_id = $color->id; */
-								}
-							}
-							
-						if(!empty($brand)){
-							$brands = Brand::where('name', $brand)->first();
-							if($brands ){
-								$brand_id = $brands->id;
-							}else{
-								$brand_id = 1;
-								/* $data = array('name'=>$brand,'is_active'=>1);
-								$brand = brand::create($data );
-								$brand_id = $brand->id; */
-							}
-						}
-						//echo $brand_id;
-																	
-						if(!empty($style)){
-							$styles = style::whereRaw('LOWER(name) = ?', [strtolower($style)])->first();
-							//echo "<pre> Styles from Shopify ";print_r($styles);echo "<pre>";
-							 if($styles){
-								$style_id = $styles->id;
-							}else{
-								$style_id = 1;
-								/* $data = array('name'=>$style,'is_active'=>1);
-								$style = style::create($data );
-								$style_id = $style->id; */
-							} 
-						}
-							
-						
-							
-							//UploadImageFromUrl($url,'','',''); 
-							//echo "<pre>";print_r($brand_id);echo "</pre>";
-							$is_sold = 0;
-							if($p->variants[0]->inventory_quantity == 0){
-								$is_sold = 1;
-							}
-					$post_data = array(
-						'user_id' => $user->id ,
-						'brand_id' => $brand_id,
-						'shopify_product_id' => $p->id,
-						'variant_id'=>$p->variants[0]->id,
-						'gender_id' => $gender_id,
-						'categories' => $category ?? 0,
-						'sizes' => $size_id ?? 0,
-						'colors' => $color_id ?? 0,
-						'locations' => $location_id->id,
-						'style_id' => $style_id ?? 0,
-						'condition_id' => 125,    
-						'title' => $p->title,
-						'description' => $p->description ?? null,
-						'price_type' => 1,
-						'price' => $p->variants[0]->price,
-						'is_sold' => $is_sold,
-						//'images' => implode(',',$image),
-						'product_url' => null,
-							);
-				//echo "<pre>";print_r($post_data);echo "</pre>";
-
-					 		
-					 $update = posts::find($post_exists->id)->update($post_data);
-					  	$image  = [];
-					//$image[] = UploadImageFromUrl($p->image->src,'','',''); 
-						foreach($p->images as $img){
-							$image[(string)$img->id] = $this->UploadImageFromUrlShopify($img->src,'','',''); 
-						}
-					/* */
-					 foreach ($p->variants as $variant) {
-
-						// Default values
-						$color_var_id = null;
-						$size_var_id  = null;
-
-						// Loop through product options and map dynamically
-						foreach ($p->options as $index => $option) {
-							$optionName = strtolower($option->name); // e.g. "Color", "Size", "Gender", etc.
-							$optionValue = $variant->{'option' . ($index + 1)} ?? null;
-							
-							
-							if ($optionName === 'color') { 
-								
-								//$color = $optionValue;
-								$color_var = color::whereRaw('LOWER(name) = ?', [strtolower($optionValue)])->first();
-								if($color_var ){
-									$color_var_id = $color_var->id;
-								}else{
-									$color_var_id  = 1;
-								}
-							}
-
-							if ($optionName === 'size') {
-								$size_var = size::where('name',$optionValue)->first();
-								if($size_var ){
-									$size_var_id = $size_var->id;
-								}else{
-									$size_var_id = 1;
-									
-								}
-							}
-						}
-						 
-						// Now insert/update into your variants table
-						ProductVariant::updateOrCreate(
-							['shopify_variant_id' => $variant->id],
-							[
-								'post_id'            => $post_exists->id,
-								'shopify_variant_id' => $variant->id,
-								'title'              => $variant->title ?? null,
-								'sku'                => $variant->sku ?? null,
-								'price'              => $variant->price ?? null,
-								'compare_at_price'   => $variant->compare_at_price ?? null,
-								'inventory_quantity' => $variant->inventory_quantity ?? 0,
-								'barcode'            => $variant->barcode ?? null,
-								'color'              => $color_var_id,
-								'size'               => $size_var_id,
-								'option3'            => $variant->option3 ?? null,
-								'image' => $image[(string)$variant->image_id] ?? null,
-
-							]
-						);
-					}
-										 
-					 
-							//echo "<pre>";print_r($update);exit;
-					// Now associate it with post
-					$postLocation = post_locations::firstOrCreate(
-						[
-							'post_id' => $post_exists->id,
-							'location_id' => $location_id->id,
-						],
-						[
-							'created_at' => now(),
-							'updated_at' => now(),
-						]
-					);
-					if(!empty($category)){
-							$data = [];
-
-							// Check if combination already exists
-							$exists = post_categories::where('post_id', $post_exists->id)
-								->where('category_id', $category)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post_exists->id,
-									'category_id' => $category,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_categories::insert($data);
-							}
-						}
-
-						if (!empty($size)) {
-							$data = [];
-
-							$exists = post_sizes::where('post_id', $post_exists->id)
-								->where('size_id', $size)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post_exists->id,
-									'size_id' => $size,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_sizes::insert($data);
-							}
-						}
-
-						if (!empty($color)) {
-							$data = [];
-
-							$exists = post_colors::where('post_id', $post_exists->id)
-								->where('color_id', $color)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post_exists->id,
-									'color_id' => $color,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_colors::insert($data);
-							}
-						} 
-
-					
-					}else{
-						echo "New product id "; print_r($p->id);echo "<br/>";
-						$gender_id = '';
-						 $size = '';
-						 $category = '';
-						 $tags = $p->tags;
-
-						$tagsArray = collect(explode(',', $tags))->map(fn($tag) => trim($tag));
-
-						// Step 2: Detect gender
-						$gender_id = 1;
-						if ($tagsArray->contains('Menswear')) {
-							$gender_id = 1;
-							$tagsArray = $tagsArray->reject(fn($tag) => $tag === 'Menswear');
-						} elseif ($tagsArray->contains('Womenswear')) {
-							$gender_id = 2;
-							$tagsArray = $tagsArray->reject(fn($tag) => $tag === 'Womenswear');
-						}
-
-						// Step 3: If gender_id is set, fetch matching categories
-						$categoryMatches = [];
-
-						if ($gender_id) {
-							$categoryMatches = category::whereIn('name', $tagsArray)
-								->where('gender_id', $gender_id)
-								->pluck('id')
-								->toArray(); // or use ->pluck('id') if you need category IDs
-						}
-						
-						//echo "<pre>";print_r($categoryMatches);echo "</pre>";
-
-						
-						//$gender_id = '';
-						$size = '';
-						$category = implode(',',$categoryMatches);
-						 
-						if($p->options){
-							 foreach($p->options as $o){
-								 if($gender_id == ''){
-									 if($o->name == 'Gender'){
-										 $gender = $o->values[0];
-										 
-									 } 
-								 }
-								 if($category == ''){
-									 if($o->name == 'Type'){
-										 $type = $o->values[0];
-										 
-									 }
-								 }
-								 if($o->name == 'Size'){
-									 $size = $o->values[0];
-									 
-								 }
-							 }
-						}
-						//echo "<pre>"; print_r($p->options);echo "</pre>";
-
-						if($shopify_products->metafields){
-							 foreach($shopify_products->metafields as $prod){
-								  
-								 if($prod->key == 'Style' || $prod->key == 'style'){
-									 $style = $prod->value;
-									 
-								 } 
-								 if($prod->key == 'Brand'){
-									 $brand = $prod->value;
-									 
-								 } 
-								 if($prod->key == 'Color'){
-									 $color = $prod->value;
-									 
-								 } 
-								 
-							 }
-						}
-						echo "Brand name ".$brand."<br/>";
-						//echo "<pre>"; print_r($shopify_products->metafields);echo "</pre>";
-						
-						if($category == ''){ 
-							if(!empty($type)){
-								$categories = category::where([['gender_id',$gender_id],['name','like',$type.'%']])->first();
-
-								if($categories ){
-									$category = $categories->id;
-								}else{
-									$category = 1;
-									/* $data = array('gender_id'=>$gender_id, 'name'=>$type, 'parent_id'=>0,'is_active'=>1);
-									$category = category::create($data );
-									$category = $category->id; */
-								}
-							}
-						}
-						//echo "<pre>";print_r($size);echo "</pre>";;
-					if(!empty($size)){
-						$sizes = size::where([['gender_id',$gender_id],['category_id',$category],['name',$size]])->first();
-						if($sizes ){
-							$size = $sizes->id;
-						}else{
-							$size = 1;
-							/* $data = array('gender_id'=>$gender_id, 'name'=>$size, 'category_id'=>$category,'is_active'=>1);
-							$size = size::create($data );
-							$size = $size->id; */
-						}
-					}
-					//echo "<pre>";print_r($size);echo "</pre>";;
-					if(!empty($color)){
-						$colors = color::where([['name',$color]])->first();
-						
-						if($colors ){
-							$color = $colors->id;
-						}else{ $color = 1;
-							/* $data = array('name'=>$color,'is_active'=>1);
-							$color = color::create($data );
-							$color = $color->id; */
-						}
-					}
-							//echo "<pre>";print_r($color);echo "</pre>";;			
-
-					if(!empty($brand)){
-						$brands = brand::where('name',$brand)->first();
-						if($brands ){
-							$brand = $brands->id;
-						}else{$brand =1;
-							/* $data = array('name'=>$brand,'is_active'=>1);
-							$brand = brand::create($data );
-							$brand = $brand->id; */
-						}
-					}
-					//echo "<pre>";print_r($brand);echo "</pre>";;		
-					if(!empty($style)){
-						$styles = style::where('name',ucfirst($style))->first();
-						if($styles ){
-							$style = $styles->id;
-						}else{
-							$style = 1;
-							/* $data = array('name'=>$style,'is_active'=>1);
-							$style = style::create($data );
-							$style = $style->id; */
-						}
-					}
-					//echo "<pre>";print_r($style);echo "</pre>";;
-					$image  = [];
-					//$image[] = UploadImageFromUrl($p->image->src,'','',''); 
-					foreach($p->images as $img){
-						$image[] = $this->UploadImageFromUrlShopify($img->src,'','',''); 
-					}
-					//echo "<pre>";print_r($image);echo "</pre>";;
-
-					//echo "<pre>";print_r($user->id);exit;
-
-					//UploadImageFromUrl($url,'','',''); 
-					$is_sold = 0;
-							if($p->variants[0]->inventory_quantity == 0){
-								$is_sold = 1;
-							}
-						$post_data = array(
-							'user_id' => $user->id ,
-							'brand_id' => $brand ?? 0,
-							'shopify_product_id' => $p->id,
-							'variant_id' => $p->variants[0]->id,
-							'gender_id' => $gender_id,
-							'categories' => $category ?? null,
-							'sizes' => $size ?? 0,
-							'colors' => $color ?? null,
-							'locations' => $location_id->id,
-							'style_id' => $style ?? null,
-							'condition_id' => 125,    
-							'title' => $p->title,
-							'description' => $p->description ?? null,
-							'price_type' => 1,
-							'price' => $p->variants[0]->price,
-							'images' => implode(',',$image),
-							'product_url' => null,
-							'is_sold' => $is_sold,
-								);
-					//echo "<pre>";print_r($location_id->id);exit;
-						$post = posts::create($post_data);
-						
-					foreach($p->images as $img){
-						//$image[] = $this->UploadImageFromUrlShopify($img->id,'','',''); 
-						$image[$img->id] = $this->UploadImageFromUrlShopify($img->src,'','',''); 
-					}
-					 foreach ($p->variants as $variant) {
-
-						// Default values
-						$color_var_id = null;
-						$size_var_id  = null;
-
-						// Loop through product options and map dynamically
-						foreach ($p->options as $index => $option) {
-							$optionName = strtolower($option->name); // e.g. "Color", "Size", "Gender", etc.
-							$optionValue = $variant->{'option' . ($index + 1)} ?? null;
-							
-							
-							if ($optionName === 'color') { 
-								
-								//$color = $optionValue;
-								$color_var = color::whereRaw('LOWER(name) = ?', [strtolower($optionValue)])->first();
-								if($color_var ){
-									$color_var_id = $color_var->id;
-								}else{
-									$color_var_id  = 1;
-								}
-							}
-
-							if ($optionName === 'size') {
-								$size_var = size::where('name',$optionValue)->first();
-								if($size_var ){
-									$size_var_id = $size_var->id;
-								}else{
-									$size_var_id = 1;
-									
-								}
-							}
-						}
-						
-						// Now insert/update into your variants table
-						ProductVariant::updateOrCreate(
-							['shopify_variant_id' => $variant->id],
-							[
-								'post_id'            => $post->id,
-								'shopify_variant_id' => $variant->id,
-								'title'              => $variant->title ?? null,
-								'sku'                => $variant->sku ?? null,
-								'price'              => $variant->price ?? null,
-								'compare_at_price'   => $variant->compare_at_price ?? null,
-								'inventory_quantity' => $variant->inventory_quantity ?? 0,
-								'barcode'            => $variant->barcode ?? null,
-								'color'              => $color_var_id,
-								'size'               => $size_var_id,
-								'option3'            => $variant->option3 ?? null,
-								'image'            => $image[$variant->image_id] ?? null,
-							]
-						);
-					}
-						
-						
-						if (!empty($category)) {
-							$data = [];
-
-							// Check if combination already exists
-							$exists = post_categories::where('post_id', $post->id)
-								->where('category_id', $category)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post->id,
-									'category_id' => $category,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_categories::insert($data);
-							}
-						}
-
-						if (!empty($size)) {
-							$data = [];
-
-							$exists = post_sizes::where('post_id', $post->id)
-								->where('size_id', $size)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post->id,
-									'size_id' => $size,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_sizes::insert($data);
-							}
-						}
-
-						if (!empty($color)) {
-							$data = [];
-
-							$exists = post_colors::where('post_id', $post->id)
-								->where('color_id', $color)
-								->exists();
-
-							if (!$exists) {
-								array_push($data, [
-									'post_id' => $post->id,
-									'color_id' => $color,
-									'created_at' => now(),
-									'updated_at' => now(),
-								]);
-								post_colors::insert($data);
-							}
-						}
-						$store_details = store_details::where('user_id',$user->id)->first();
-							$locationArr = [
-								'appuser_id' => $user->id,
-								'address' => $store_details->address1 ?? null,
-								'city' => $store_details->city ?? null,
-								'area' => $store_details->country ?? null,
-								'postal_code' => $store_details->postal_Code ?? null,
-								'latitude' => $store_details->latitude ?? null,
-								'longitude' => $store_details->longitude ?? null
-							];
-							//echo "<pre>";print_r($locationArr);exit;
-							$last_location = location::create($locationArr);
-							$last_location->save();                    
-							$data = [
-									'post_id' => $post->id,
-									'location_id' => $last_location->id,
-									'created_at' => date('Y-m-d H:i:s'),
-									'updated_at' => date('Y-m-d H:i:s')                    
-								];                
-							$getlocation = post_locations::create($data);               
-							$getlocation->save();
-							
-							$post->locations = $last_location->id;
-							$post->save();						
-						}
-						//print_r($post_exists);echo "<br/>";
-					}
-				$i++;
-				
-			//}
-				
-			}
-			echo "Itrated ".$i;
-				echo "Products Uploaded successfully ";exit;
-		}catch (\Exception $e) {
-			echo $e->getMessage();exit;
-          //  return $this->SendResponse(null, $e->getMessage(), 500);
-        }    
-	}
+		curl_close($ch);
+		$products = json_decode($response)->products ?? [];
+	//	echo "<pre>";print_r($products);exit;
 	
+        foreach ($products as $p) {
+            $this->syncShopifyProduct($p);
+        }
+
+        /** --------------------------------
+         * SUCCESS RESPONSE
+         * -------------------------------- */
+        return response()->json([
+            'status'  => true,
+            'message' => 'Products synced successfully with variants'
+        ]);
+
+    } catch (\Exception $e) {
+
+        /** --------------------------------
+         * ERROR LOG
+         * -------------------------------- */
+        \Log::error('Shopify Sync Error', [
+            'message' => $e->getMessage(),
+            'line'    => $e->getLine(),
+            'file'    => $e->getFile()
+        ]);
+
+        return response()->json([
+            'status' => false,
+            'error'  => $e->getMessage(),
+            'line'   => $e->getLine()
+        ], 500);
+    }
+}
+	
+
+	/**
+	 * Create/update one post (with variants, images, categories, location)
+	 * from a Shopify product payload (REST product object / products webhook).
+	 * Returns the post, or false when no app user matches the product vendor.
+	 */
+	public function syncShopifyProduct($p)
+	{
+		$post = null;
+
+            /** --------------------------------
+             * MATCH USER FROM VENDOR
+             * -------------------------------- */
+            $vendor = strtolower(
+                str_replace(' ', '_', $this->RemoveSpecialChar($p->vendor))
+            );
+
+            $user = User::where(function ($q) use ($vendor) {
+
+                $q->where('username', $vendor)
+                    ->orWhereRaw(
+                        "REPLACE(website, '-', '_') LIKE ?",
+                        ["%$vendor%"]
+                    )
+                    ->orWhereRaw(
+                        "REPLACE(website, '-', '.') LIKE ?",
+                        ["%$vendor%"]
+                    );
+
+            })->where('role_id', 8)->first();
+
+            // Skip if no user found
+            if (!$user) {
+                return false;
+            }
+
+            /** --------------------------------
+             * USER LOCATION
+             * -------------------------------- */
+            $location = location::where('appuser_id', $user->id)->first();
+
+            /** --------------------------------
+             * TAG BASED CATEGORY + GENDER
+             * -------------------------------- */
+            $tagsArray = collect(explode(',', $p->tags))
+                ->map(fn($t) => trim($t));
+
+            // Default Menswear = 1
+            $gender_id = $tagsArray->contains('Womenswear') ? 2 : 1;
+
+            // Remove gender tags
+            $tagsArray = $tagsArray->reject(function ($t) {
+                return in_array($t, ['Menswear', 'Womenswear']);
+            });
+
+            /** --------------------------------
+             * CATEGORY IDS
+             * -------------------------------- */
+            $categoryIds = category::whereIn('name', $tagsArray)
+                ->where('gender_id', $gender_id)
+                ->pluck('id')
+                ->toArray();
+
+            /** --------------------------------
+             * BASIC POST DATA
+             * -------------------------------- */
+            $postData = [
+
+                'user_id'            => $user->id,
+                'shopify_product_id' => $p->id,
+                'variant_id'         => $p->variants[0]->id ?? null,
+
+                'gender_id'          => $gender_id,
+
+                // Store categories as comma separated
+                'categories'         => implode(',', $categoryIds),
+
+                'locations'          => $location->id ?? null,
+
+                'condition_id'       => 125,
+
+                'title'              => $p->title,
+
+                'description'        => $p->body_html ?? null,
+
+                'price_type'         => 1,
+
+                'price'              => $p->variants[0]->price ?? 0,
+
+                // only active products are visible; draft/archived are hidden
+                'is_active'          => ($p->status ?? 'active') == 'active' ? 1 : 0,
+
+                'is_sold'            => 0,
+            ];
+
+            /** --------------------------------
+             * CREATE OR UPDATE POST
+             * -------------------------------- */
+            $post = posts::updateOrCreate(
+                [
+                    'shopify_product_id' => $p->id
+                ],
+                $postData
+            );
+			$images1 = [];
+			$variantImageMap = [];
+			$imageIdMap = [];
+
+			if (!empty($p->images)) {
+
+				foreach ($p->images as $img) {
+
+					if (empty($img->src)) {
+						continue;
+					}
+
+					$uploadedImage = $this->UploadImageFromUrlShopify(
+						$img->src,
+						'posts',
+						'variant',
+						'0',
+						$img->alt ?? ''
+					);
+
+					if (!$uploadedImage) {
+						continue;
+					}
+
+					// Product gallery images
+					$images1[] = $uploadedImage;
+
+					// Shopify Image ID => Uploaded Image
+					$imageIdMap[$img->id] = $uploadedImage;
+
+					// Variant ID => Uploaded Image
+					if (!empty($img->variant_ids)) {
+
+						foreach ($img->variant_ids as $variantId) {
+							$variantImageMap[$variantId] = $uploadedImage;
+						}
+					}
+				}
+			}
+
+			$post->update([
+				'images' => implode(',', array_unique($images1))
+			]);
+		
+            /** --------------------------------
+             * HANDLE VARIANTS
+             * -------------------------------- */
+            $images = [];
+            $allQty = [];
+
+            foreach ($p->variants as $variant) {
+
+				/** --------------------------------
+				 * VARIANT IMAGE
+				 * -------------------------------- */
+
+				$variantImage = null;
+
+				/*
+				|--------------------------------------------------------------------------
+				| Priority 1 : Variant mapped using variant_ids
+				|--------------------------------------------------------------------------
+				*/
+				if (isset($variantImageMap[$variant->id])) {
+
+					$variantImage = $variantImageMap[$variant->id];
+
+				}
+				/*
+				|--------------------------------------------------------------------------
+				| Priority 2 : Variant has image_id
+				|--------------------------------------------------------------------------
+				elseif (!empty($variant->image_id) && isset($imageIdMap[$variant->image_id])) {
+
+					$variantImage = $imageIdMap[$variant->image_id];
+
+				}
+				/*
+				|--------------------------------------------------------------------------
+				| Priority 3 : First Product Image
+				|--------------------------------------------------------------------------
+				*/
+				elseif (!empty($images1)) {
+
+					$variantImage = $images1[0];
+
+				}
+                /** --------------------------------
+                 * EXTRACT SIZE / COLOR
+                 * -------------------------------- */
+                $color_id = null;
+                $size_id  = null;
+
+                foreach ($p->options as $index => $option) {
+
+                    $optionName  = strtolower($option->name);
+
+                    $optionValue = $variant->{'option' . ($index + 1)} ?? null;
+
+                    if (!$optionValue) {
+                        continue;
+                    }
+
+                    /** --------------------------------
+                     * COLOR
+                     * -------------------------------- */
+                    if (in_array($optionName, ['color', 'colour'])) {
+
+                        $colorModel = color::whereRaw(
+                            'LOWER(name) = ?',
+                            [strtolower($optionValue)]
+                        )->first();
+
+                        $color_id = $colorModel->id ?? 1;
+                    }
+
+                    /** --------------------------------
+                     * SIZE
+                     * -------------------------------- */
+                    if ($optionName == 'size') {
+
+                        $sizeModel = size::where(
+                            'name',
+                            $optionValue
+                        )->first();
+
+                        $size_id = $sizeModel->id ?? 1;
+                    }
+                }
+				  
+			
+                /** --------------------------------
+                 * CREATE OR UPDATE VARIANT
+                 * -------------------------------- */
+                ProductVariant::updateOrCreate(
+                    [
+                        'shopify_variant_id' => $variant->id
+                    ],
+                    [
+                        'post_id'            => $post->id,
+
+                        'shopify_variant_id' => $variant->id,
+
+                        'title'              => $variant->title,
+
+                        'sku'                => $variant->sku,
+
+                        'price'              => $variant->price,
+
+                        'compare_at_price'   => $variant->compare_at_price,
+
+                        'inventory_quantity' => $variant->inventory_quantity ?? 0,
+
+                        'barcode'            => $variant->barcode,
+
+                        'image' => $variantImage,
+
+                        'color'              => $color_id,
+
+                        'size'               => $size_id,
+                    ]
+                );
+
+                /** --------------------------------
+                 * INVENTORY
+                 * -------------------------------- */
+                $allQty[] = $variant->inventory_quantity ?? 0;
+            }
+
+            /** --------------------------------
+             * UPDATE POST IMAGES
+             * -------------------------------- */
+         
+
+            /** --------------------------------
+             * MARK SOLD IF ALL QTY = 0
+             * -------------------------------- */
+            if (
+                !empty($allQty) &&
+                collect($allQty)->every(fn($q) => intval($q) === 0)
+            ) {
+                $post->update([
+                    'is_sold' => 1
+                ]);
+            }
+
+            /** --------------------------------
+             * POST CATEGORY RELATION
+             * -------------------------------- */
+            if (!empty($categoryIds)) {
+
+                foreach ($categoryIds as $catId) {
+
+                    post_categories::firstOrCreate([
+                        'post_id'     => $post->id,
+                        'category_id' => $catId
+                    ]);
+                }
+            }
+
+            /** --------------------------------
+             * POST LOCATION RELATION
+             * -------------------------------- */
+            if ($location) {
+
+                post_locations::firstOrCreate([
+                    'post_id'     => $post->id,
+                    'location_id' => $location->id
+                ]);
+            }
+
+		return $post;
+	}
+
 	public function RemoveSpecialChar($str) {
 
       // Using str_replace() function  
@@ -1132,8 +805,10 @@ class HomeController extends Controller
       // Returning the result 
       return $res;
       }
-	  public function UploadImageFromUrlShopify($url,$dir,$module,$guard = 0)
-	{
+
+		public function UploadImageFromUrlShopify($url, $path = 'posts', $type = 'variant',$guard = 0,$alt='')  
+{
+    $module = $path; // ✅ ensures it's always defined 
 		$imgId = 1;
 		$lastRecord = images::latest()->first();
 		if(!empty($lastRecord)){
@@ -1159,14 +834,14 @@ class HomeController extends Controller
 		$destinationPath = public_path("uploads/files/post_images/");
 		
 		
-		if(!file_exists($destinationPath)){
+		if(!file_exists($destinationPath)){  
 			mkdir($destinationPath,0755);
 		}
 		touch( $destinationPath . '/'.$iname );
 		file_put_contents($destinationPath.'/'.$iname, $image_data);
 	   // $file->move($destinationPath, $iname);
 		
-		$record = images::create(['name'=>$iname,'module'=>$module,'directory'=>$dir,'is_admin'=>$guard]);
+		$record = images::create(['name'=>$iname,'module'=>$module,'directory'=>$path ,'is_admin'=>$guard,'alt'=>$alt]);
 
 		return $record->id;
 	}

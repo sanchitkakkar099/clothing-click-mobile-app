@@ -17,6 +17,7 @@ Route::get('/', function () {
 Route::get('/profile/{user_id}','HomeController@profile')->name('profile');
 Route::get('/fetchStores','HomeController@fetchStores')->name('stores');
 Route::get('/shopify_posts','HomeController@getShopifyPost')->name('shopify_posts');
+Route::post('/webhooks/shopify','ShopifyWebhookController@handle')->name('shopify_webhook');
 Route::get('/posts/{id}','HomeController@destroyByShopifyId')->name('delete_shopify_posts');
 
     //Route::get('user/shopify_posts', 'UserController@getShopifyPost');
@@ -62,7 +63,10 @@ Route::get('/clear-cache', function() {
     $exitCode = Artisan::call('view:clear');
     return 'DONE'; //Return anything
 });
-/* Route::get('/clear-cache', function() {
+Route::get('/mailjet-test', function () {
+    return sendMandrillOTP('shiv13r@gmail.com', 'Test User', 123456);
+});
+ Route::get('/clear-cache', function() {
     $exitCode = Artisan::call('config:cache');
     return 'DONE'; //Return anything
-}); */
+}); 
