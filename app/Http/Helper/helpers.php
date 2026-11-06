@@ -1,4 +1,8 @@
 <?php
+
+use Illuminate\Support\Facades\Log;
+use Google\Auth\Credentials\ServiceAccountCredentials;
+use Illuminate\Support\Facades\Http;
 use App\permissions;
 use App\modules;
 use App\images;
@@ -8,127 +12,97 @@ use Twilio\Rest\Client;
 use App\User;
 use App\user_notification_settings;
 
+
 function getStripeObject()
 {
    return new \Stripe\StripeClient(
     env('STRIPE_SECRET_KEY')
 );
 }
-
-function SendFirebaseNotification($title, $msg, $tokens, $data)
+function SendFirebaseNotification($title, $msg, $tokens, $data = [])
 {
-    $result = null;
-    
-    $url = 'https://fcm.googleapis.com/fcm/send';
-    $headers = array(
-        'Content-Type:application/json',
-        'Authorization:key=' . config('constants.FIREBASE_SERVER_KEY')
-    );
+    if (empty($tokens)) {
+        Log::info('FCM: No device tokens found');
+        return false;
+    }
 
-    $data['title'] = $title;
-    $data['body'] = $msg;
+    $projectId = env('FIREBASE_PROJECT_ID');
 
-    $tokens = array_chunk($tokens, 1000);
+    // ✅ Decode JSON from ENV
+    $json = base64_decode(env('FIREBASE_SERVICE_ACCOUNT_BASE64'));
+    $serviceAccount = json_decode($json, true);
+
+    if (!$serviceAccount) {
+        Log::error('FCM: Invalid service account JSON from env');
+        return false;
+    }
+
+    $scopes = ['https://www.googleapis.com/auth/firebase.messaging'];
+
+    $credentials = new ServiceAccountCredentials($scopes, $serviceAccount);
+    $auth = $credentials->fetchAuthToken();
+
+    if (empty($auth['access_token'])) {
+        Log::error('FCM OAuth failed', $auth);
+        return false;
+    }
+
+    $accessToken = $auth['access_token'];
 
     foreach ($tokens as $token) {
-//        $token = 'cINpUVbFJU48sEt7l8H31k:APA91bEtRfOAvb-DQxyw9shROOaYKd-WMCehHT_TqROM6sMq1zkkE9Xwebwne_o0Lp8Ud7tEPz4qyI40MVoXhhdLuTZVAsNjvINXWVn-6oWBWaY0-TSoNOrhS4HdKwabVresZGEHi1bB';
-//        dd($token[0]);
-        $getDevice = user_logindevice_info::whereIn('devices_token', $token)->distinct('devices_token')->get();
-        $deviceTypes = $getDevice->groupBy('devices_type');
+        $payload = [
+            'message' => [
+                'token' => $token,
+                'notification' => [
+                    'title' => $title,
+                    'body'  => $msg,
+                ],
+			    'apns' => [
+						'payload' => [
+							'aps' => [
+								'sound' => 'handoff.mp3', // or custom sound file
+							],
+						],
+					],
 
-        foreach($deviceTypes as $deviceType => $tokenValue){
-            $tokenIds = $tokenValue->unique('devices_token')->pluck('devices_token')->toArray();
-//            dd($tokenIds);
-            if ($deviceType == 'A') {
-                $payload = [
-                    'registration_ids' => $tokenIds,
-                    'data'             => $data,
-                    //"android"          => [
-                      //  "priority" => "high",
-                    //],
-                    "sound"=> "default"
-                ];
-            } else {
-                $payload = [
-                    "notification"     => [
-                        "title" => $title,
-                        "body"  => $msg,
-                        //"sound"=> "default"
-                        "sound"=> "Revisedv2.wav"
-                    ],
-                    'registration_ids' => $tokenIds,
-                    'data'             => $data,
-                    "android"          => [
-                        "priority" => "high",
-                    ],
-                    
-                ];
-    
-            }  
-        //    print_r($payload);exit;
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-        $result = curl_exec($ch);
-        
-        echo curl_error($ch);
-        
-            // echo "<br>sending request data <br><br>";
-            // print_r($payload);
-            // echo "<br><br>final success data sending request data <br><br>";            
-            // print_r($result);        
-            // exit;
-            
-        if ($result === FALSE) {
-            // print_r($result);
-            // echo "this is false";
-            // echo "<Br>";
-            die('Curl failed: ' . curl_error($ch));
-        }else{
-//            echo "this is sucess";
-//            dd($result);
-        }        
-        curl_close($ch);
-        
-        }
+                'data' => array_map('strval', $data),
+            ],
+        ];
 
+       $response = Http::withToken($accessToken)
+    ->post(
+        "https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send",
+        $payload
+    );
 
-        
-
-            
-        // $payload = [
-        //     "notification" => [
-        //         "title" => $title,
-        //         "body" => $msg
-        //     ],
-        //     'registration_ids' => $token,
-        //     'data' => $data,
-        //     "android" => [
-        //         "priority" => "high"
-        //     ]
-        // ];
-
+	Log::info('FCM Send Result', [
+		'token' => substr($token, 0, 10) . '...',
+		'status' => $response->status(),
+		'response' => $response->json(),
+	]);
 
     }
 
-    return $result;
+    return true;
 }
+
+
+
 
 function getUsersFCMTokens($userId)
 {
-    $tokens = [];
-    
-    if(!empty($userId)){
-        $tokens = user_logindevice_info::where('appuser_id',$userId)->whereNotNULL('devices_token')->distinct('devices_token')->pluck('devices_token')->toArray();
+    if (empty($userId)) {
+        return [];
     }
 
-    return $tokens;
+    return user_logindevice_info::where('appuser_id', $userId)
+        ->whereNotNull('devices_token')
+        ->pluck('devices_token')
+        ->unique()
+        ->values()
+        ->toArray();
 }
+
 
 function sendTwillioSMS($number,$message)
 {
@@ -453,5 +427,121 @@ function compressImage($source, $destination, $quality) {
   imagejpeg($image, $destination, $quality);
 
 }
+if (!function_exists('sendMandrillOTP')) {
+    function sendMandrillOTP($toEmail, $userName, $otp)
+    {
+		   \Log::info('sendMailjetOTP helper called');
 
+        try {
+			$mj = new \Mailjet\Client(
+				config('services.mailjet.key'),
+				config('services.mailjet.secret'),
+				true,
+				['version' => 'v3.1'] 
+			);
+
+            $html = "
+                <h2>Hello {$userName},</h2>
+                <p>Your One Time Password (OTP) is:</p>
+                <h1 style='letter-spacing:3px;'>{$otp}</h1>
+                <p>This OTP is valid for 10 minutes.</p>
+                <br>
+                <p>Regards,<br>" . config('services.mailjet.from_name') . "</p>
+            ";
+
+            $body = [
+                'Messages' => [[
+                    'From' => [
+                        'Email' => config('services.mailjet.from_address'),
+                        'Name'  => config('services.mailjet.from_name'),
+                    ],
+                    'To' => [[
+                        'Email' => $toEmail,
+                        'Name'  => $userName,
+                    ]],
+                    'Subject' => 'Your OTP Verification Code',
+                    'HTMLPart' => $html,
+                ]]
+            ];
+
+            $response = $mj->post(\Mailjet\Resources::$Email, ['body' => $body]);
+
+            if (!$response->success()) {
+                \Log::error('Mailjet OTP API Error', $response->getData());
+                return false;
+            }
+
+            return true;
+
+        } catch (\Exception $e) {
+            \Log::error('Mailjet OTP Exception: ' . $e->getMessage());
+            return false;
+        }
+    }
+} 
+if (!function_exists('sendMailjetResetPassword')) {
+    function sendMailjetResetPassword($toEmail, $userName, $resetLink)
+    {
+        \Log::info('sendMailjetResetPassword helper called');
+
+        try {
+            $mj = new \Mailjet\Client(
+                config('services.mailjet.key'),
+                config('services.mailjet.secret'),
+                true,
+                ['version' => 'v3.1']
+            );
+
+            $html = "
+                <h2>Hello {$userName},</h2>
+                <p>You requested to reset your password.</p>
+                <p>Click the link below to reset it:</p>
+                <p>
+                    <a href='{$resetLink}' style='
+                        background:#4F46E5;
+                        color:#ffffff;
+                        padding:12px 20px;
+                        text-decoration:none;
+                        border-radius:5px;
+                        display:inline-block;
+                    '>Reset Password</a>
+                </p>
+                <p>If the button does not work, copy and paste this link into your browser:</p>
+                <p>{$resetLink}</p>
+                <br>
+                <p>This link will expire soon for security reasons.</p>
+                <br>
+                <p>Regards,<br>" . config('services.mailjet.from_name') . "</p>
+            ";
+
+            $body = [
+                'Messages' => [[
+                    'From' => [
+                        'Email' => config('services.mailjet.from_address'),
+                        'Name'  => config('services.mailjet.from_name'),
+                    ],
+                    'To' => [[
+                        'Email' => $toEmail,
+                        'Name'  => $userName,
+                    ]],
+                    'Subject' => 'Reset Your Password',
+                    'HTMLPart' => $html,
+                ]]
+            ];
+
+            $response = $mj->post(\Mailjet\Resources::$Email, ['body' => $body]);
+
+            if (!$response->success()) {
+                \Log::error('Mailjet Reset Password API Error', $response->getData());
+                return false;
+            }
+
+            return true;
+
+        } catch (\Exception $e) {
+            \Log::error('Mailjet Reset Password Exception: ' . $e->getMessage());
+            return false;
+        }
+    }
+}
 ?>
