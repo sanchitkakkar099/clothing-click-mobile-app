@@ -104,14 +104,37 @@ class VendorShopifyOrderService
         return preg_match('/^[a-z0-9][a-z0-9\-]*\.myshopify\.com$/', $d) ? $d : null;
     }
 
+    /**
+     * Access token of a vendor store. Lookup order:
+     *  1. SHOPIFY_VENDOR_TOKENS (JSON map domain => token), if set
+     *  2. the vendor platform (VENDOR_PLATFORM_KEY), the single source of truth for vendor tokens
+     * Returns null when the vendor is not connected / the platform has no token for it.
+     */
     public function tokenFor($shop)
     {
         $map = config('services.shopify.vendor_tokens');
         if (is_string($map)) {
             $map = json_decode($map, true);
         }
+        if (is_array($map) && !empty($map[$shop])) {
+            return $map[$shop];
+        }
 
-        return is_array($map) ? ($map[$shop] ?? null) : null;
+        $key = config('services.shopify.vendor_platform_key');
+        if (!$key) {
+            return null;
+        }
+
+        try {
+            $resp = Http::withHeaders(['X-Api-Key' => $key])->timeout(10)
+                ->get(rtrim(config('services.shopify.vendor_platform_url'), '/') . '/store-credentials', ['store_domain' => $shop]);
+
+            return $resp->successful() ? ($resp->json('data.access_token') ?: null) : null;
+        } catch (\Throwable $e) {
+            Log::error('Vendor platform token lookup failed: ' . $e->getMessage());
+
+            return null;
+        }
     }
 
     /**

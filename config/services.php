@@ -52,6 +52,9 @@ return [
 		'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
 		// JSON map of vendor store domain => access token, e.g. {"drip-click-2.myshopify.com":"shpat_..."}
 		'vendor_tokens' => env('SHOPIFY_VENDOR_TOKENS'),
+		// vendor platform that holds each vendor store's Shopify token (server-to-server, shared key)
+		'vendor_platform_url' => env('VENDOR_PLATFORM_URL', 'https://vendor.clothingclick.ca/api/storeappInfo'),
+		'vendor_platform_key' => env('VENDOR_PLATFORM_KEY'),
 		'webhook_secret' => env('SHOPIFY_WEBHOOK_SECRET'),
 	],
 
