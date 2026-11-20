@@ -375,30 +375,55 @@ if ($categoriesToProcess) {
 				]);
 			$s_order_id = '';
 			$product = posts::find($all['product_id']);
-				$order=[];
-				$order['line_items']=[["variant_id"=>$all['variant_id'], "quantity"=>1]];
-				$customer= ['id'=>Auth::user()->email,'email'=>Auth::user()->email];
-				$data_to_be_passed = [
-					"order"=>$order,
-					"customer"=>$customer,
-					"billing_address"=>$address,
-					"shipping_address"=>$address,
-					"financial_status"=>"paid",
-					"transactions"=> [
-										[
-										"kind"=> "sale",
-										"status"=> "success",
-										"amount"=> $paymentIntent['amount']/100
-										]
-									  
-									],
-					"note"=> "Thank you for your order!"				
-				];
-				//print_r(json_encode($data_to_be_passed));
-				//exit;
-				
-				$curl = curl_init();
+				// Billing = card billing details; shipping = Stripe shipping address for delivery orders
+				// (type 1), otherwise the billing address. Everything must be inside "order", otherwise
+				// Shopify ignores it and the order has no customer or address.
+				$billingDetails = $paymentIntent['charges']['data'][0]['billing_details'] ?? null;
+				$phone = $billingDetails['phone'] ?? ($all['phone'] ?? '');
+				$billingName = explode(' ', trim((string) ($billingDetails['name'] ?? '')), 2);
+				$billingAddr = $address;
+				$billingAddr['first_name'] = $billingName[0] !== '' ? $billingName[0] : $address['first_name'];
+				$billingAddr['last_name'] = $billingName[1] ?? $address['last_name'];
+				$billingAddr['phone'] = $phone;
 
+				$shippingAddr = $billingAddr;
+				$stripeShipping = $paymentIntent['shipping'] ?? null;
+				if ($all['type_of_order'] == 1 && !empty($stripeShipping['address']['line1'])) {
+					$shipName = explode(' ', trim((string) ($stripeShipping['name'] ?? '')), 2);
+					$shippingAddr = [
+						'first_name' => $shipName[0],
+						'last_name'  => $shipName[1] ?? '',
+						'address1'   => $stripeShipping['address']['line1'],
+						'address2'   => $stripeShipping['address']['line2'] ?? ($all['address2'] ?? ''),
+						'city'       => $stripeShipping['address']['city'] ?? '',
+						'province'   => $stripeShipping['address']['state'] ?? '',
+						'zip'        => $stripeShipping['address']['postal_code'] ?? '',
+						'country'    => $stripeShipping['address']['country'] ?? '',
+						'phone'      => $stripeShipping['phone'] ?? ($all['phone'] ?? $phone),
+					];
+				}
+
+				$lineItems = [["variant_id"=>$all['variant_id'], "quantity"=>1]];
+				$transactions = [["kind"=> "sale", "status"=> "success", "amount"=> $paymentIntent['amount']/100]];
+				$data_to_be_passed = [
+					"order" => [
+						"line_items"       => $lineItems,
+						"email"            => Auth::user()->email,
+						"customer"         => [
+							"first_name" => $billingAddr['first_name'],
+							"last_name"  => $billingAddr['last_name'],
+							"email"      => Auth::user()->email,
+						],
+						"billing_address"  => $billingAddr,
+						"shipping_address" => $shippingAddr,
+						"financial_status" => "paid",
+						"transactions"     => $transactions,
+						"note"             => "Thank you for your order!",
+					],
+				];
+
+				$postShopifyOrder = function ($payload) {
+					$curl = curl_init();
 					curl_setopt_array($curl, array(
 					  CURLOPT_URL => 'https://parenttesting.myshopify.com/admin/api/2023-10/orders.json',
 					  CURLOPT_RETURNTRANSFER => true,
@@ -408,18 +433,30 @@ if ($categoriesToProcess) {
 					  CURLOPT_FOLLOWLOCATION => true,
 					  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
 					  CURLOPT_CUSTOMREQUEST => 'POST',
-					  CURLOPT_POSTFIELDS =>json_encode($data_to_be_passed),
+					  CURLOPT_POSTFIELDS =>json_encode($payload),
 					  CURLOPT_HTTPHEADER => array(
 						'X-Shopify-Access-Token: '. config('services.shopify.access_token'),
 						'Content-Type: application/json'
 					  ),
 					));
-
 					$response = curl_exec($curl);
-
 					curl_close($curl);
-					$rese = json_decode($response);
-					//echo "<pre>";print_r($rese->order->id);exit;
+					return [$response, json_decode($response)];
+				};
+
+				[$response, $rese] = $postShopifyOrder($data_to_be_passed);
+
+				// If Shopify rejects the full order (e.g. an address it cannot validate), log why and
+				// fall back to the old minimal order so the paid order still reaches the parent store.
+				if (empty($rese->order->id)) {
+					\Log::warning('Shopify order with customer/address rejected, retrying minimal order', ['transaction_id' => $all['transaction_id'], 'response' => substr((string) $response, 0, 500)]);
+					[$response, $rese] = $postShopifyOrder(["order" => [
+						"line_items"       => $lineItems,
+						"financial_status" => "paid",
+						"transactions"     => $transactions,
+						"note"             => "Thank you for your order!",
+					]]);
+				}
 					// The payment is already captured at this point, so never lose the order record
 					// if Shopify rejects the request: log it and carry on with an empty Shopify order id.
 					$s_order_id = $rese->order->id ?? '';
