@@ -35,225 +35,272 @@ use App\user_addresses;
 
 class FilterPostController extends APIResponseController {
 
-    public function index(Request $request)
-    {
-        try {
+   public function index(Request $request)
+{
+    try {
+        $all = $request->all();
 
-            $all = $request->all();
+        /** -----------------------------
+         * VALIDATION
+         * ----------------------------- */
+        $validator = Validator::make($all, [
+            'is_mysize' => 'required|numeric|max:1',
+            'gender_id' => 'nullable|string',
+            'sizes' => 'nullable|string',
+            'colors' => 'nullable|string',
+            'condition_id' => 'nullable|numeric',
+            'distance' => 'nullable|numeric',
+            'style' => 'nullable|string',
+            'seller' => 'nullable|numeric',
+            'brand_id' => 'nullable|string',
+            'categories' => 'nullable|string',
+            'slectedCategories' => 'nullable|string',
+            'latitude' => 'nullable|string',
+            'longitude' => 'nullable|string',
+            'price_type' => 'nullable|numeric',
+            'price_from' => 'nullable|required_if:price_type,1|numeric',
+            'price_to' => 'nullable|required_if:price_type,1|numeric',
+            'sort_by' => 'nullable|string|max:15',
+            'sort_value' => 'nullable|required_with:sort_by|string|max:5',
+            'is_only_count' => 'required|numeric|min:0|max:1',
+        ]);
 
-            $validator = Validator::make($request->all(), [
-                'is_mysize' => 'required|numeric|max:1',
-                'gender_id' => 'nullable|string',
-                'sizes' => 'nullable|string',
-                'colors' => 'nullable|string',
-                'condition_id' => 'nullable|numeric',
-                'distance' => 'nullable|numeric',
-                'style' => 'nullable|string',
-                'seller' => 'nullable|numeric',
-                'brand_id' => 'nullable|string',
-                'latitude' => 'nullable|string',
-                'longitude' => 'nullable|string',
-                'price_type' => 'nullable|numeric',
-                'price_from' => 'nullable|required_if:price_type,1|numeric',
-                'price_to' => 'nullable|required_if:price_type,1|numeric',
-                'sort_by' => 'nullable|string|max:15',
-                'sort_value' => 'nullable|required_with:sort_by|string|max:5',
-                'is_only_count' => 'required|numeric|min:0|max:1',
-            ]);
-            
-            if ($validator->fails()) {
-                return $this->SendResponse(null, $validator->messages()->first(), 400);
-            }
-			$all['price_type'] = 1;
-            $isDistanceCodition = false;
-			$cordinates = array('latitude'=> $all['latitude'],'longitude'=> $all['longitude']);
-
-            $distance = 50;
-            //if(isset($all['distance']) && $all['distance'] > 0){
-            if(isset($all['distance'])){
-                $isDistanceCodition = true;
-                $distance = $all['distance'];
-            }
-
-            $sizes = [];
-            if($all['is_mysize'] == 1){
-                $sizes = Auth::user()->userSizes()->where('is_active',1)->pluck('size_id')->toArray();
-            }else{
-                if(isset($all['sizes']) && !empty($all['sizes'])){
-                    $sizes = explode(',',$all['sizes']);
-                }
-            }
-
-            $user = Auth::user();
-            
-            $finalArray = [];
-            
-            if(!empty($all['categories'])){
-                $get_categories = explode(',',$all['categories']);
-                $finalArray = category::whereDoesntHave('childCategories')->wherein('id',$get_categories)->where([['is_active',1],['is_delete',0]])->pluck('id')->toArray();                            
-            }
-            
-            if(!empty($all['slectedCategories'])){
-                $get_categories = explode(',',$all['slectedCategories']);
-                $finalArray = category::wherein('id',$get_categories)->where([['is_active',1],['is_delete',0]])->pluck('id')->toArray();                            
-            }
-			
-			//DB::enableQueryLog();
-
-
-       $posts = posts::PrivateAccountPost($user)
-    ->RemoveBlockUserPosts()
-    ->RemoveSoldPost()
-    ->GetNearestPostDashboard($cordinates, true)     // <-- Added
-    ->where([['posts.is_active',1],['posts.is_delete',0]])
-    ->where('posts.user_id','!=',Auth::user()->id)
-    ->where(function($q) use($all, $sizes,$finalArray) {
-        
-        if (!empty($all['gender_id'])) {
-            $gender_array = array_map('trim', explode(',', $all['gender_id'])); 
-            $q->where(function($query) use ($gender_array) {
-                foreach ($gender_array as $gender) {
-                    $gender = (int)$gender;
-                    $query->orWhereRaw("FIND_IN_SET(?, REPLACE(posts.gender_id, ' ', ''))", [$gender]);
-                }
-            });
+        if ($validator->fails()) {
+            return $this->SendResponse(null, $validator->messages()->first(), 400);
         }
 
-        if(!empty($all['brand_id'])){
-            $brands = explode(',',$all['brand_id']);
-            $q->whereIn('posts.brand_id',$brands);
+        // Convert empty strings to null
+        $all = array_map(function ($value) {
+            return ($value === "" || $value === "null") ? null : $value;
+        }, $all);
+
+        $all['price_type'] = 1; // force price_type
+
+        $user = Auth::user();
+        $coordinates = ['latitude' => $all['latitude'], 'longitude' => $all['longitude']];
+        $distance = $all['distance'] ?? 50;
+
+        /** -----------------------------
+         * SIZES
+         * ----------------------------- */
+        $sizes = [];
+        if ($all['is_mysize'] == 1) {
+            $sizes = $user->userSizes()->where('is_active', 1)->pluck('size_id')->toArray();
+        } elseif (!empty($all['sizes'])) {
+            $sizes = explode(',', $all['sizes']);
         }
 
-        if(!empty($all['condition_id'])){
-            $q->where('posts.condition_id',$all['condition_id']);
-        }
+        /** -----------------------------
+         * CATEGORIES
+         * ----------------------------- */
+       $categoryIds = [];
 
-        if(!empty($all['style'])){
-            $q->whereIn('posts.style_id',explode(',',$all['style']));
-        }
+		$categoriesToProcess = $all['selectedCategories'] ?? null;
 
-        if (!empty($all['categories'])) {
-            $category_array = explode(',', $all['categories']);
-            $q->where(function($query) use ($category_array) {
-                foreach ($category_array as $catId) {
-                    $query->orWhereRaw("posts.categories REGEXP ?", ['(^|,)' . $catId . '($|,)']);
-                }
-            });
-        }
+		if ($categoriesToProcess) {
 
-        if(!empty($all['colors'])){
-            $colors = explode(',',$all['colors']);
-            $colors = implode('|',$colors);
-            $q->whereRaw('CONCAT(",", posts.colors, ",") REGEXP ",('.$colors.'),"');
-        }
+			$selected = array_map('trim', explode(',', $categoriesToProcess));
+			$remove   = !empty($all['categories']) 
+				? array_map('trim', explode(',', $all['categories'])) 
+				: [];
 
-        if(!empty($all['price_type'])){
-            $q->where('posts.price_type',$all['price_type']);
-        }
+			$categoriesToProcess = implode(',', array_diff($selected, $remove)); 
+		}
+if ($categoriesToProcess) {
+ 
+    $categoryItems = explode(',', (string) $categoriesToProcess); 
 
-        if(!empty($all['price_from']) && $all['price_type'] == 1){
-            $q->where('posts.price','>=',(int)$all['price_from']);
-        }
+    foreach ($categoryItems as $cat) {
+        $cat = trim($cat);
 
-        if(!empty($all['price_to']) && $all['price_type'] == 1){
-            $q->where('posts.price','<=',(int)$all['price_to']);
-        }
+        if (is_numeric($cat)) {
+            $categoryIds[] = (int)$cat;
 
-        if(count($sizes) > 0){
-            $sizes = implode('|',$sizes);
-            $q->whereRaw('CONCAT(",", posts.sizes, ",") REGEXP ",('.$sizes.'),"');
-        }
+            $catName = category::where('id', $cat) 
+                ->where('is_active', 1) 
+                ->where('is_delete', 0)
+                ->value('name');
 
-        if(!empty($all['seller'])){
-            if((int)$all['seller'] !== 1){
-                $q->with('user')->whereHas('user',function($s){
-                    $s->where('role_id',8);
-                });
-            }else{
-                $q->with('user')->whereHas('user',function($s) use($all) {
-                    $s->where('role_id',(int)$all['seller']);
-                });
+            if ($catName) {
+                $relatedIds = category::where('name', $catName)
+                    ->where('is_active', 1)
+                    ->where('is_delete', 0)
+                    ->pluck('id')
+                    ->toArray();
+
+                $categoryIds = array_merge($categoryIds, $relatedIds);
             }
-        }
+        } else {
+            $relatedIds = category::where('name', $cat)
+                ->where('is_active', 1)
+                ->where('is_delete', 0)
+                ->pluck('id')
+                ->toArray();
 
-    });
-
-
-            if(isset($all['sort_by']) && !empty($all['sort_by'])){
-                switch($all['sort_by']){
-                    case 'date':
-                        $posts->orderby('posts.created_at',$all['sort_value']);
-                        break;
-                    case 'price':
-                        $query = "CAST(posts.price AS UNSIGNED) ".$all['sort_value'];
-                        $posts->orderByRaw($query);
-                        break;
-                    case 'distance':
-                        $posts->orderby('distance',$all['sort_value']);
-                        break;
-					case 'trending':
-                        $posts->orderby('posts.post_views','desc');
-                        break;
-                    default:
-                        $posts->orderby('id','desc');
-                        break;
-                }
-            }
-
-            if($all['is_only_count'] == 1){
-                $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
-                $res['total_posts'] = $posts->total();
-                $res['user_detail'] = $user->id. '- '.$user->name. '- '.$user->username;
-            }else{
-                $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
-                $res['currentPage'] = $posts->currentPage();
-                $res['hasMorePages'] = $posts->hasMorePages();
-                $res['posts'] = posts::getAPIPostListData($posts->items());
-                $res['user_detail'] = $user->id. '- '.$user->name;
-            }
-
-            $logs = [];
-            if(!empty($all['categories'])){
-                $categories = explode(',',$all['categories']);
-                if(!empty($categories)){
-                    foreach($categories as $cat){
-                        array_push($logs,[
-                            'user_id' => AUth::id(),
-                            'log_type' => 'CATEGORY',
-                            'resource_id' => $cat,
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'updated_at' => date('Y-m-d H:i:s'),
-                        ]);
-                    }
-                }
-            }
-
-            if(!empty($all['brand_id'])){
-                $brands = explode(',',$all['brand_id']);
-                if(!empty($brands)){
-                    foreach($brands as $b){
-                        array_push($logs,[
-                            'user_id' => AUth::id(),
-                            'log_type' => 'BRAND',
-                            'resource_id' => $b,
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'updated_at' => date('Y-m-d H:i:s'),
-                        ]);
-                    }
-                }
-            }
-
-            if(!empty($logs)){
-                user_search_logs::insert($logs);
-            }
-           // dd(DB::getQueryLog());
-
-            return $this->SendResponse($res, 'Success', 200);
-
-        } catch (\Exception $e) {
-            return $this->SendResponse(null, $e->getMessage(), 500);
+            $categoryIds = array_merge($categoryIds, $relatedIds);
         }
     }
+
+    $categoryIds = array_unique($categoryIds); 
+}
+		
+        /** -----------------------------
+         * MAIN QUERY
+         * ----------------------------- */
+        $posts = posts::PrivateAccountPost($user) 
+            ->RemoveBlockUserPosts()
+            ->RemoveSoldPost()
+            ->GetNearestPostDashboard($coordinates, true)
+            ->where([['posts.is_active', 1], ['posts.is_delete', 0]])
+            ->where('posts.user_id', '!=', $user->id)
+            ->where(function ($q) use ($all, $sizes, $categoryIds) {
+
+                /** GENDER FILTER */
+                if (!empty($all['gender_id'])) {
+                    $genders = array_map('trim', explode(',', $all['gender_id']));
+                    $q->where(function ($query) use ($genders) {
+                        foreach ($genders as $gender) {
+                            $query->orWhereRaw("FIND_IN_SET(?, REPLACE(posts.gender_id, ' ', ''))", [(int)$gender]);
+                        }
+                    });
+                }
+
+                /** BRAND FILTER */
+                if (!empty($all['brand_id'])) {
+                    $brands = explode(',', $all['brand_id']);
+                    $q->whereIn('posts.brand_id', $brands);
+                }
+
+                /** CONDITION FILTER */
+                if (!empty($all['condition_id'])) {
+                    $q->where('posts.condition_id', $all['condition_id']);
+                }
+
+                /** STYLE FILTER */
+                if (!empty($all['style'])) {
+                    $q->whereIn('posts.style_id', explode(',', $all['style']));
+                }
+
+                /** CATEGORY FILTER */
+               if (!empty($categoryIds)) {
+					$categoryRegex = implode('|', $categoryIds);
+					$q->whereRaw('CONCAT(",", posts.categories, ",") REGEXP ",(' . $categoryRegex . '),"');
+				}
+
+                /** COLORS FILTER */
+                if (!empty($all['colors'])) {
+                    $colors = implode('|', explode(',', $all['colors']));
+                    $q->whereRaw('CONCAT(",", posts.colors, ",") REGEXP ",(' . $colors . '),"');
+                }
+
+                /** PRICE FILTER */
+                $q->where('posts.price_type', $all['price_type']);
+                if (!empty($all['price_from']) && $all['price_type'] == 1) {
+                    $q->where('posts.price', '>=', (int)$all['price_from']);
+                }
+                if (!empty($all['price_to']) && $all['price_type'] == 1) {
+                    $q->where('posts.price', '<=', (int)$all['price_to']);
+                }
+
+                /** SIZE FILTER */
+                if (count($sizes) > 0) {
+                    $sizeRegex = implode('|', $sizes);
+                    $q->whereRaw('CONCAT(",", posts.sizes, ",") REGEXP ",(' . $sizeRegex . '),"');
+                }
+
+                /** SELLER FILTER */
+                if (!empty($all['seller'])) {
+                    $q->with('user')->whereHas('user', function ($s) use ($all) {
+                        if ((int)$all['seller'] !== 1) {
+                            $s->where('role_id', 8);
+                        } else {
+                            $s->where('role_id', (int)$all['seller']);
+                        }
+                    });
+                }
+            });
+
+        /** -----------------------------
+         * SORTING
+         * ----------------------------- */
+        if (!empty($all['sort_by'])) {
+            $sortValue = $all['sort_value'] ?? 'desc';
+            switch ($all['sort_by']) {
+                case 'date':
+                    $posts->orderBy('posts.created_at', $sortValue);
+                    break;
+                case 'price':
+                    $posts->orderBy('posts.price', $sortValue);
+                    break;
+                case 'distance':
+                    $posts->orderBy('distance', $sortValue);
+                    break;
+                case 'trending':
+                    $posts->orderBy('posts.post_views', 'desc');
+                    break;
+                default:
+                    $posts->orderBy('id', 'desc');
+                    break;
+            }
+        } else {
+            $posts->orderBy('id', 'desc');
+        }
+
+        /** -----------------------------
+         * PAGINATION
+         * ----------------------------- */
+        $posts = $posts->paginate(config('constants.API_PER_PAGE_RECORDS'));
+
+        if ($all['is_only_count'] == 1) {
+            $res['total_posts'] = $posts->total();
+            $res['user_detail'] = $user->id . ' - ' . $user->name . ' - ' . $user->username;
+        } else {
+            $res['currentPage'] = $posts->currentPage();
+            $res['hasMorePages'] = $posts->hasMorePages();
+            $res['posts'] = posts::getAPIPostListData($posts->items());
+            $res['user_detail'] = $user->id . ' - ' . $user->name;
+        }
+
+        /** -----------------------------
+         * USER SEARCH LOGS
+         * ----------------------------- */
+        $logs = [];
+
+        if (!empty($all['categories'])) {
+            foreach (explode(',', $all['categories']) as $cat) {
+                $logs[] = [
+                    'user_id' => $user->id,
+                    'log_type' => 'CATEGORY',
+                    'resource_id' => $cat,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+        }
+
+        if (!empty($all['brand_id'])) {
+            foreach (explode(',', $all['brand_id']) as $brand) {
+                $logs[] = [
+                    'user_id' => $user->id,
+                    'log_type' => 'BRAND',
+                    'resource_id' => $brand,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+        }
+
+        if (!empty($logs)) {
+            user_search_logs::insert($logs);
+        }
+
+        return $this->SendResponse($res, 'Success', 200);
+
+    } catch (\Exception $e) {
+        return $this->SendResponse(null, $e->getMessage(), 500);
+    }
+}
+
 	
 	
 	public function saveOrder(Request $request)
@@ -262,6 +309,7 @@ class FilterPostController extends APIResponseController {
 		$validator = Validator::make($all, [
 			'seller_id' => 'required|numeric',
 			'product_id' => 'required|numeric',
+			'variant_id' => 'required|numeric',
 			'payment_mode' => 'required|string',
 			'transaction_id' => 'required|string',
 			'type_of_order' => 'required|numeric',
@@ -327,9 +375,8 @@ class FilterPostController extends APIResponseController {
 				]);
 			$s_order_id = '';
 			$product = posts::find($all['product_id']);
-			if($product->variant_id != ''){
 				$order=[];
-				$order['line_items']=[["variant_id"=>$product->variant_id, "quantity"=>1]];
+				$order['line_items']=[["variant_id"=>$all['variant_id'], "quantity"=>1]];
 				$customer= ['id'=>Auth::user()->email,'email'=>Auth::user()->email];
 				$data_to_be_passed = [
 					"order"=>$order,
@@ -363,7 +410,7 @@ class FilterPostController extends APIResponseController {
 					  CURLOPT_CUSTOMREQUEST => 'POST',
 					  CURLOPT_POSTFIELDS =>json_encode($data_to_be_passed),
 					  CURLOPT_HTTPHEADER => array(
-						'X-Shopify-Access-Token: '. env('SHOPIFY_ACCESS_TOKEN'),
+						'X-Shopify-Access-Token: '. config('services.shopify.access_token'),
 						'Content-Type: application/json'
 					  ),
 					));
@@ -373,13 +420,19 @@ class FilterPostController extends APIResponseController {
 					curl_close($curl);
 					$rese = json_decode($response);
 					//echo "<pre>";print_r($rese->order->id);exit;
-					$s_order_id = $rese->order->id;
+					// The payment is already captured at this point, so never lose the order record
+					// if Shopify rejects the request: log it and carry on with an empty Shopify order id.
+					$s_order_id = $rese->order->id ?? '';
+					if ($s_order_id === '') {
+						\Log::error('Shopify order creation failed', ['transaction_id' => $all['transaction_id'], 'product_id' => $all['product_id'], 'response' => substr((string) $response, 0, 500)]);
+					}
 				
-			}
+			
 			$order = orders::create([
 				'buyer_id' => Auth::user()->id,
 				'seller_id' => $all['seller_id'],
 				'product_id' => $all['product_id'],
+				'variant_id' => $all['variant_id'],
 				'shopify_order_id' => $s_order_id,
 				'tax' => 0,
 				'total' => $paymentIntent['amount']/100,
@@ -392,6 +445,18 @@ class FilterPostController extends APIResponseController {
 				'type_of_order' => $all['type_of_order'],
 			]);
         
+			// Also create the order in the vendor's own Shopify store (only for connected vendors;
+			// parent-store-only products are skipped). Never lets a vendor-store problem fail the order.
+			try {
+				$vendorResult = app(\App\Services\VendorShopifyOrderService::class)->createForPost(
+					$product, $all['variant_id'], $address, ['email' => Auth::user()->email],
+					$paymentIntent['amount']/100,
+					['app_order_id' => $order->id, 'parent_order' => $rese->order->name ?? '']
+				);
+			} catch (\Throwable $e) {
+				\Log::error('Vendor order step crashed: ' . $e->getMessage());
+			}
+
 			$response = $order;
 
             return $this->SendResponse($order, 'Order created successfully', 200);
@@ -411,8 +476,9 @@ class FilterPostController extends APIResponseController {
 			$all_orders = orders::where([['buyer_id',Auth::user()->id]])->orderby('id','desc')->get();
 			//echo "<pre>";print_r($all_orders);exit;
 			foreach($all_orders as $order){
-				$post = posts::getOrderPostDetails($order->product_id);
-				$seller_details = User::getOrderAPIsellerData($order->seller_id);
+				$post = posts::getOrderPostDetails($order->product_id, $order->variant_id);
+				//print_r($post);exit;
+				$seller_details = User::getOrderAPIsellerData($order->seller_id); 
 				$res['product_details'] = $post;
 				$res['order_details'] = $order;
 				$res['seller_details'] = $seller_details;
@@ -438,7 +504,7 @@ class FilterPostController extends APIResponseController {
 
         try{
             $order = orders::find($all['order_id']);
-			$post = posts::getOrderPostDetails($order->product_id);
+			$post = posts::getOrderPostDetails($order->product_id,$order->variant_id);
 			$seller_details = User::getOrderAPIsellerData($order->seller_id);
 			$address = user_addresses::find($order->shipping_address_id);
 			$res['product_details'] = $post;

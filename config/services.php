@@ -43,8 +43,15 @@ return [
 	],
 
 
+	'stripe' => [
+		'secret' => env('STRIPE_SECRET_KEY'),
+		'publishable' => env('STRIPE_PUBLISH_KEY'),
+	],
+
 	'shopify' => [
 		'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
+		// JSON map of vendor store domain => access token, e.g. {"drip-click-2.myshopify.com":"shpat_..."}
+		'vendor_tokens' => env('SHOPIFY_VENDOR_TOKENS'),
 		'webhook_secret' => env('SHOPIFY_WEBHOOK_SECRET'),
 	],
 
