@@ -403,6 +403,11 @@ if ($categoriesToProcess) {
 					];
 				}
 
+				// Orders from the app are tagged (the vendor platform copies the tags to the vendor store order).
+				// A pickup order needs no shipping, so it is created already fulfilled.
+				$isPickup = $all['type_of_order'] == 2;
+				$orderTags = $isPickup ? "Mobile App, Pickup" : "Mobile App, Delivery";
+				$pickupFulfilled = $isPickup ? ["fulfillment_status" => "fulfilled"] : [];
 				$lineItems = [["variant_id"=>$all['variant_id'], "quantity"=>1]];
 				$transactions = [["kind"=> "sale", "status"=> "success", "amount"=> $paymentIntent['amount']/100]];
 				$data_to_be_passed = [
@@ -419,6 +424,8 @@ if ($categoriesToProcess) {
 						"financial_status" => "paid",
 						"transactions"     => $transactions,
 						"note"             => "Thank you for your order!",
+						"tags"             => $orderTags,
+						...$pickupFulfilled,
 					],
 				];
 
@@ -455,6 +462,8 @@ if ($categoriesToProcess) {
 						"financial_status" => "paid",
 						"transactions"     => $transactions,
 						"note"             => "Thank you for your order!",
+						"tags"             => $orderTags,
+						...$pickupFulfilled,
 					]]);
 				}
 					// The payment is already captured at this point, so never lose the order record
@@ -471,6 +480,7 @@ if ($categoriesToProcess) {
 				'product_id' => $all['product_id'],
 				'variant_id' => $all['variant_id'],
 				'shopify_order_id' => $s_order_id,
+				'shopify_order_number' => $rese->order->name ?? null,
 				'tax' => 0,
 				'total' => $paymentIntent['amount']/100,
 				'payment_mode' => $all['payment_mode'],
