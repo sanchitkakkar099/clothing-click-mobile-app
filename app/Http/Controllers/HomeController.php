@@ -423,10 +423,20 @@ class HomeController extends Controller
          * FETCH PRODUCTS FROM SHOPIFY
          * -------------------------------- */
 
+		// ?product_id=<parent product id>: sync only that product (used right after a vendor pushes
+		// a product, so the app post exists within seconds). Without it: the whole store.
+		$productId = $request->query('product_id');
+		if ($productId !== null && !ctype_digit((string) $productId)) {
+			return response()->json(['status' => false, 'message' => 'Invalid product_id'], 422);
+		}
+		$url = $productId
+			? "https://parenttesting.myshopify.com/admin/api/2022-01/products/{$productId}.json"
+			: 'https://parenttesting.myshopify.com/admin/api/2022-01/products.json?limit=250';
+
 		$ch = curl_init();
 
 		curl_setopt_array($ch, [
-			CURLOPT_URL => 'https://parenttesting.myshopify.com/admin/api/2022-01/products.json?limit=250',
+			CURLOPT_URL => $url,
 			CURLOPT_RETURNTRANSFER => true,
 			CURLOPT_CUSTOMREQUEST => 'GET',
 			CURLOPT_HTTPHEADER => [
@@ -443,7 +453,13 @@ class HomeController extends Controller
 		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
 		curl_close($ch);
-		$products = json_decode($response)->products ?? [];
+		$decoded = json_decode($response);
+		$products = $productId
+			? (isset($decoded->product) ? [$decoded->product] : [])
+			: ($decoded->products ?? []);
+		if ($productId && !$products) {
+			return response()->json(['status' => false, 'message' => 'Product not found on the parent store'], 404);
+		}
 	//	echo "<pre>";print_r($products);exit;
 	
         foreach ($products as $p) {
